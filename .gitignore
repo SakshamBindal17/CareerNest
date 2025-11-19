@@ -1,0 +1,8 @@
+/server/node_modules/
+/server/.env
+
+# optional: ignore any top-level node_modules too
+/node_modules/
+
+# logs
+npm-debug.log*
