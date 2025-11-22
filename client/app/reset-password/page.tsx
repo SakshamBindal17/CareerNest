@@ -4,7 +4,6 @@
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import ThemeSwitcher from '@/components/ThemeSwitcher'
 import PasswordStrength from '@/components/PasswordStrength'
 import { Eye, EyeOff } from 'lucide-react'
 // This is a new hook from Next.js to read URL parameters
@@ -221,9 +220,7 @@ export default function ResetPasswordPage() {
 
         {/* --- Right Form Pane --- */}
         <div className="relative flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-gray-900">
-          <div className="absolute top-4 right-4">
-            <ThemeSwitcher />
-          </div>
+          {/* ThemeSwitcher removed */}
           <ResetPasswordForm />
         </div>
       </div>

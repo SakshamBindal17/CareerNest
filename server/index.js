@@ -1,6 +1,8 @@
 // 1. Load our libraries
 require('dotenv').config(); // Loads the .env file first
 const express = require('express');
+const http = require('http'); // Socket.io HTTP server wrapper
+const { Server } = require('socket.io');
 const db = require('./database');
 const { sendEmail } = require('./emailService');
 const cors = require('cors');
@@ -16,10 +18,107 @@ const https = require('https'); // For HEAD checks to Cloudinary
 
 // 2. Get variables
 const app = express();
-const port = 3001; // We'll use 3001 for the server
+// Trust proxy (needed for secure cookies & correct protocol when behind Render/Vercel proxies)
+app.set('trust proxy', 1);
+
+const server = http.createServer(app);
+
+// Dynamic CORS origin list (comma separated) or allow all if not set.
+// NOTE: For production security tighten CORS_ORIGINS to your actual domains, e.g.
+// CORS_ORIGINS=https://app.careernest.com,https://api.careernest.com
+const rawOrigins = process.env.CORS_ORIGINS || 'http://localhost:3000';
+const allowedOrigins = rawOrigins.split(',').map(o => o.trim()).filter(Boolean);
+
+// Shared CORS config for Express
+const corsConfig = {
+  origin: (origin, cb) => {
+    // Allow non-browser requests (no origin) and any origin if wildcard requested
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes('*')) return cb(null, true);
+    // If we explicitly listed origins, validate; else (no env) allow all to avoid dev friction
+    if (allowedOrigins.length === 0 || allowedOrigins.some(o => origin === o || origin.startsWith(o))) {
+      return cb(null, true);
+    }
+    console.warn('[CORS] Blocked origin:', origin);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization']
+};
+
+// Socket.IO with permissive dynamic origin (mirrors Express CORS)
+const io = new Server(server, {
+  cors: {
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes('*')) return cb(null, true);
+      if (allowedOrigins.length === 0 || allowedOrigins.some(o => origin === o || origin.startsWith(o))) {
+        return cb(null, true);
+      }
+      console.warn('[Socket CORS] Blocked origin:', origin);
+      return cb(new Error('Socket origin not allowed'));
+    },
+    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+    credentials: true
+  }
+});
+
+// --- Socket Authentication Middleware ---
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+  if (!token) return next(new Error('Authentication token missing'));
+  try {
+    const payload = jsonwebtoken.verify(token, process.env.JWT_SECRET);
+    const userId = payload?.user?.id || payload?.id || payload?.user_id || payload?.userId || null;
+    if (!userId) {
+      console.warn('[Socket Auth] Missing user id in token payload:', payload);
+      return next(new Error('Invalid token payload'));
+    }
+    socket.user = { id: userId };
+    console.log('[Socket] Authenticated user', userId);
+    next();
+  } catch (e) {
+    console.error('[Socket Auth] verify error:', e.message);
+    next(new Error('Invalid token'));
+  }
+});
+
+// --- Socket Connection Handling ---
+io.on('connection', (socket) => {
+  try {
+    const userId = socket.user.id;
+    socket.join(`user-${userId}`);
+    console.log('[Socket] User connected', userId);
+
+    socket.on('chat:join', async ({ connectionId }) => {
+      try {
+        if (!connectionId) return;
+        const check = await db.query(
+          `SELECT connection_id FROM connections WHERE connection_id = $1 AND (sender_id = $2 OR receiver_id = $2)`,
+          [connectionId, userId]
+        );
+        if (check.rows.length === 0) return; // Not authorized
+        socket.join(`connection-${connectionId}`);
+        console.log('[Socket] User', userId, 'joined connection room', connectionId);
+      } catch (err) {
+        console.error('Socket chat:join error:', err);
+      }
+    });
+
+    socket.on('disconnect', () => {
+      // No special cleanup needed; rooms auto-managed
+    });
+  } catch (err) {
+    console.error('Socket connection error:', err);
+  }
+});
+const port = process.env.PORT || 3001; // Render will supply PORT in production
 const projectName = process.env.PROJECT_NAME; // Gets "CareerNest" from .env
 app.use(express.json()); // Middleware to parse JSON bodies
-app.use(cors()); // This tells the server to accept requests from other origins
+app.use(cors(corsConfig)); // Robust CORS (credentials + dynamic origins)
+// Preflight: cors() middleware already responds to OPTIONS automatically.
+// Explicit wildcard registration removed due to path-to-regexp crash; keep lean.
 // Configure multer to save files to the local disk temporarily
 const upload = multer({ dest: 'temp/' }); // <--- ADD THIS
 console.log('Booting API from', __filename);
@@ -30,10 +129,62 @@ console.log('Booting API from', __filename);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS institute_roll_number VARCHAR(100)`);
     // Allow HODs to assign faculty as verification delegates
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verification_delegate BOOLEAN DEFAULT false`);
+
+    // Seed default Super Admin if not present
+    const superAdminEmail = 'careernest.server@gmail.com';
+    const superAdminPassword = 'Careernest@123';
+    const existing = await db.query(
+      `SELECT user_id FROM users WHERE (official_email = $1 OR personal_email = $1) AND role = 'Super Admin'`,
+      [superAdminEmail]
+    );
+    if (existing.rows.length === 0) {
+      try {
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(superAdminPassword, salt);
+        await db.query(
+          `INSERT INTO users (full_name, official_email, role, status, password_hash) VALUES ($1, $2, 'Super Admin', 'active', $3)`,
+          ['CareerNest Super Admin', superAdminEmail, hash]
+        );
+        console.log('Seeded default Super Admin account.');
+      } catch (seedErr) {
+        console.error('Failed to seed Super Admin:', seedErr);
+      }
+    } else {
+      console.log('Super Admin account already present.');
+    }
   } catch (e) {
     console.error('DB migration check failed (optional columns):', e);
   }
 })();
+
+// --- Middleware: restrict to Super Admin ---
+function isSuperAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'Super Admin') {
+    return res.status(403).json({ error: 'Forbidden: Super Admin access required.' });
+  }
+  next();
+}
+
+// Lightweight helper: get department name + HOD name for a given user_id
+async function getDepartmentAndHOD(userId) {
+  const result = await db.query(
+    `SELECT d.name AS department_name, d.hod_name
+     FROM users u
+     JOIN departments d ON u.department_id = d.department_id
+     WHERE u.user_id = $1`,
+    [userId]
+  );
+  return result.rows[0] || { department_name: null, hod_name: null };
+}
+
+// Lightweight helper: get a user's display fields
+async function getUserBasic(userId) {
+  const r = await db.query(
+    `SELECT user_id, full_name, role, official_email, personal_email, college_id, department_id, is_verification_delegate
+     FROM users WHERE user_id = $1`, [userId]
+  );
+  return r.rows[0] || null;
+}
 
 // 3. Define our main "route"
 app.get('/', (req, res) => {
@@ -320,6 +471,127 @@ app.post('/api/auth/signup', upload.single('verificationFile'), async (req, res)
   }
 });
 
+/**
+ * @route GET /api/auth/me
+ * @desc Return fresh user info (for dynamic flags like is_verification_delegate)
+ */
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const userRow = await getUserBasic(req.user.id);
+    if (!userRow) return res.status(404).json({ error: 'User not found.' });
+    res.status(200).json({
+      user: {
+        id: userRow.user_id,
+        fullName: userRow.full_name,
+        role: userRow.role,
+        email: userRow.official_email || userRow.personal_email,
+        college_id: userRow.college_id,
+        department_id: userRow.department_id,
+        is_verification_delegate: userRow.is_verification_delegate
+      }
+    });
+  } catch (err) {
+    console.error('Error in /api/auth/me:', err);
+    res.status(500).json({ error: 'Failed to load user.' });
+  }
+});
+
+/**
+ * @route GET /api/hod-admin/delegates
+ * @desc (HOD) List all faculty in the HOD's department with delegate flag.
+ */
+app.get('/api/hod-admin/delegates', [authMiddleware, isHODorAdmin], async (req, res) => {
+  const { department_id } = req.user;
+  try {
+    const faculty = await db.query(
+      `SELECT user_id, full_name, official_email, is_verification_delegate
+       FROM users
+       WHERE department_id = $1 AND role = 'Faculty' AND status != 'suspended'
+       ORDER BY full_name ASC`,
+      [department_id]
+    );
+    res.status(200).json({ faculty: faculty.rows });
+  } catch (err) {
+    console.error('Error in /api/hod-admin/delegates (GET):', err);
+    res.status(500).json({ error: 'Failed to load delegates.' });
+  }
+});
+
+/**
+ * @route POST /api/hod-admin/delegates
+ * @desc (HOD) Toggle faculty verification delegate flag and notify via email.
+ */
+app.post('/api/hod-admin/delegates', [authMiddleware, isHODorAdmin], async (req, res) => {
+  const { userId, makeDelegate } = req.body;
+  const { department_id, user_id: hodId } = req.user;
+
+  if (typeof userId !== 'number') {
+    return res.status(400).json({ error: 'userId must be a number.' });
+  }
+
+  try {
+    // Ensure target user is faculty in same department
+    const target = await db.query(
+      `SELECT user_id, full_name, official_email, role, department_id, is_verification_delegate
+       FROM users WHERE user_id = $1`,
+      [userId]
+    );
+
+    if (target.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const faculty = target.rows[0];
+    if (faculty.department_id !== department_id || faculty.role !== 'Faculty') {
+      return res.status(403).json({ error: 'You may only manage faculty in your department.' });
+    }
+
+    const newFlag = !!makeDelegate;
+    if (faculty.is_verification_delegate === newFlag) {
+      return res.status(200).json({
+        message: 'No change.',
+        is_verification_delegate: faculty.is_verification_delegate
+      });
+    }
+
+    await db.query(
+      `UPDATE users SET is_verification_delegate = $1 WHERE user_id = $2`,
+      [newFlag, userId]
+    );
+
+    // Fetch dept + HOD display name for email context
+    const { department_name } = await getDepartmentAndHOD(hodId);
+    const hodRow = await getUserBasic(hodId);
+    const hodName = hodRow?.full_name || 'Your HOD';
+
+    if (newFlag) {
+      const subject = 'You have been assigned as an Alumni Verification Delegate';
+      const html = `
+        <p style="font-size:14px;">Dear ${faculty.full_name},</p>
+        <p style="font-size:14px;">You have been selected by <strong>${hodName}</strong>${department_name ? ` – <strong>${department_name}</strong>` : ''} to help verify alumni for CareerNest.</p>
+        <p style="font-size:14px;">When you sign in, you will see an <strong>Alumni Verification</strong> link in your sidebar. Use it to approve or reject pending alumni for your department.</p>
+        <p style="font-size:14px;">Thank you for supporting your department's alumni network.</p>
+      `;
+      const text = `Dear ${faculty.full_name},\n\n${hodName} (${department_name || 'Department'}) has selected you to verify alumni on CareerNest.\nYou will now see an 'Alumni Verification' link in your sidebar to review pending alumni.`;
+      if (faculty.official_email) {
+        try {
+          await sendEmail(faculty.official_email, subject, text, html);
+        } catch (emailErr) {
+          console.error('Failed to send delegate email:', emailErr);
+        }
+      }
+    }
+
+    res.status(200).json({
+      message: newFlag ? 'Delegate assigned successfully.' : 'Delegate removed successfully.',
+      is_verification_delegate: newFlag
+    });
+  } catch (err) {
+    console.error('Error in /api/hod-admin/delegates (POST):', err);
+    res.status(500).json({ error: 'Failed to update delegate.' });
+  }
+});
+
 
 /**
  * @route POST /api/auth/verify-otp
@@ -456,8 +728,9 @@ app.post('/api/auth/login', async (req, res) => {
         fullName: user.full_name,
         role: user.role,
         email: user.official_email || user.personal_email,
-        college_id: user.college_id, // <-- THE FIX
-        department_id: user.department_id // <-- THE FIX
+        college_id: user.college_id,
+        department_id: user.department_id,
+        is_verification_delegate: user.is_verification_delegate
       },
       redirectTo: redirectTo
     });
@@ -586,8 +859,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
  * @desc (ADMIN) Gets all verified, pending onboarding requests.
  * [cite: 34, 677-679]
  */
-app.get('/api/admin/onboarding-requests', async (req, res) => {
-  // LATER: We will add security middleware here.
+app.get('/api/admin/onboarding-requests', [authMiddleware, isSuperAdmin], async (req, res) => {
 
   try {
     // Find all requests that have been verified by email
@@ -611,7 +883,7 @@ app.get('/api/admin/onboarding-requests', async (req, res) => {
  * @desc (ADMIN) Approves a verified onboarding request.
  * This creates the university and the college admin user.
  */
-app.post('/api/admin/approve-request', async (req, res) => {
+app.post('/api/admin/approve-request', [authMiddleware, isSuperAdmin], async (req, res) => {
   const { requestId } = req.body;
   const client = await db.pool.connect();
 
@@ -695,18 +967,19 @@ app.post('/api/admin/approve-request', async (req, res) => {
 
     // 10. Send the "Welcome & Set Password" email
     const setPasswordLink = `http://localhost:3000/reset-password?token=${token}`;
-    const subject = "Welcome to CareerNest! Your college has been approved.";
+    const subject = 'Welcome to CareerNest! Your institute has been approved.';
     const html = `
       <p>Congratulations, ${request.contact_name}!</p>
-      <p>Your college, <b>${request.college_name}</b>, has been approved on CareerNest.</p>
+      <p>Your institute, <b>${request.college_name}</b>, has been approved on CareerNest.</p>
       <p>Click the link below to set your password and access your new College Admin dashboard:</p>
       <a href="${setPasswordLink}" style="padding: 10px 15px; background-color: #0070f3; color: white; text-decoration: none; border-radius: 5px;">
         Set Your Password
       </a>
       <p>This link will expire in 3 days.</p>
+      <p>Thanks,<br/>CareerNest</p>
     `;
 
-    await sendEmail(request.contact_email, "Email text content", html);
+    await sendEmail(request.contact_email, subject, html);
 
     // 11. Send success response
     res.status(200).json({ message: 'Request approved, university created, and welcome email sent!' });
@@ -728,7 +1001,7 @@ app.post('/api/admin/approve-request', async (req, res) => {
  * @desc (ADMIN) Rejects a verified onboarding request.
  * Deletes the request and sends a rejection email.
  */
-app.post('/api/admin/reject-request', async (req, res) => {
+app.post('/api/admin/reject-request', [authMiddleware, isSuperAdmin], async (req, res) => {
   const { requestId, rejectionReason } = req.body;
 
   try {
@@ -781,7 +1054,7 @@ app.post('/api/admin/reject-request', async (req, res) => {
  * @desc (ADMIN) Returns platform-wide statistics for the Super Admin dashboard.
  * Includes total users, breakdown by role, total universities and pending onboarding requests.
  */
-app.get('/api/admin/stats', async (req, res) => {
+app.get('/api/admin/stats', [authMiddleware, isSuperAdmin], async (req, res) => {
   try {
     // Total users
     const totalUsersResult = await db.query(`SELECT COUNT(*) AS count FROM users`);
@@ -815,6 +1088,38 @@ app.get('/api/admin/stats', async (req, res) => {
   } catch (err) {
     console.error('Error in /api/admin/stats:', err);
     res.status(500).json({ error: 'An error occurred while fetching admin stats.' });
+  }
+});
+
+/**
+ * @route GET /api/admin/universities
+ * @desc (Super Admin) Lists universities or pending verified requests.
+ *        Query param: status=active|pending (default active)
+ */
+app.get('/api/admin/universities', [authMiddleware, isSuperAdmin], async (req, res) => {
+  const { status } = req.query;
+  try {
+    if (status === 'pending') {
+      // Verified onboarding requests awaiting approval
+      const pending = await db.query(
+        `SELECT request_id, college_name, contact_name, contact_email, contact_role, created_at
+         FROM onboarding_requests
+         WHERE is_verified = true
+         ORDER BY created_at DESC`
+      );
+      return res.status(200).json({ type: 'pending', items: pending.rows });
+    }
+    // Active universities
+    const active = await db.query(
+      `SELECT university_id, name, admin_name, admin_email, admin_title, status, created_at
+       FROM universities
+       WHERE status = 'active'
+       ORDER BY created_at DESC`
+    );
+    res.status(200).json({ type: 'active', items: active.rows });
+  } catch (err) {
+    console.error('Error in /api/admin/universities:', err);
+    res.status(500).json({ error: 'Failed to fetch universities list.' });
   }
 });
 
@@ -997,10 +1302,23 @@ app.post('/api/college-admin/departments', [authMiddleware, isCollegeAdmin], asy
 
     // 7. Send the "Set Password" email to the new HOD
     const setPasswordLink = `http://localhost:3000/reset-password?token=${token}`;
-    const subject = `You have been assigned as HOD on CareerNest`;
-    const html = `<p>Hello ${hodName}, You have been assigned as the new Head of Department. Click this link to set your password: <a href="${setPasswordLink}">Set Password</a></p>`;
+    const subject = 'You have been assigned as HOD on CareerNest';
 
-    await sendEmail(hodEmail, "You have been assigned as HOD", html);
+    // Fetch college and department names for personalization
+    const collegeResult = await db.query(
+      `SELECT name FROM universities WHERE university_id = $1`,
+      [college_id]
+    );
+    const collegeName = collegeResult.rows[0]?.name || 'your institute';
+
+    const html = `
+      <p>Hello ${hodName},</p>
+      <p>You have been assigned as the new Head of Department for <b>${departmentName}</b> by <b>${req.user.full_name || 'College Admin'}</b> (${req.user.role}), ${collegeName}.</p>
+      <p>Click this link to set your password: <a href="${setPasswordLink}">Set Password</a></p>
+      <p>Thanks,<br/>CareerNest</p>
+    `;
+
+    await sendEmail(hodEmail, subject, html);
 
     // 8. Send success response
     res.status(201).json({ message: 'Department and HOD created successfully.' });
@@ -1140,9 +1458,22 @@ app.post('/api/college-admin/change-hod', [authMiddleware, isCollegeAdmin], asyn
 
     // 9. Send the "Set Password" email to the NEW HOD
     const setPasswordLink = `http://localhost:3000/reset-password?token=${token}`;
-    const subject = `You have been assigned as HOD on CareerNest`;
-    const html = `<p>Hello ${hodName}, You have been assigned as the new Head of Department. Click this link to set your password: <a href="${setPasswordLink}">Set Password</a></p>`;
-    await sendEmail(hodEmail, "You have been assigned as HOD", html);
+    const subject = 'You have been assigned as HOD on CareerNest';
+
+    // Fetch college and department names for personalization
+    const collegeResult = await db.query(
+      `SELECT name FROM universities WHERE university_id = $1`,
+      [college_id]
+    );
+    const collegeName = collegeResult.rows[0]?.name || 'your institute';
+
+    const html = `
+      <p>Hello ${hodName},</p>
+      <p>You have been assigned as the new Head of Department for <b>${departmentName}</b> by <b>${req.user.full_name || 'College Admin'}</b> (${req.user.role}), ${collegeName}.</p>
+      <p>Click this link to set your password: <a href="${setPasswordLink}">Set Password</a></p>
+      <p>Thanks,<br/>CareerNest</p>
+    `;
+    await sendEmail(hodEmail, subject, html);
 
     // 10. Send success response
     res.status(201).json({ message: 'HOD changed successfully. Invite sent to new HOD.' });
@@ -1369,11 +1700,28 @@ app.delete('/api/college-admin/departments/:deptId', [authMiddleware, isCollegeA
 /* --- HOD ADMIN API ROUTES --- */
 /* -------------------------------- */
 
+// Middleware: Allow HOD, College Admin, or Faculty delegate
+const alumniVerificationAccess = async (req, res, next) => {
+  const role = req.user.role;
+  if (role === 'HOD' || role === 'College Admin') return next();
+  if (role === 'Faculty') {
+    try {
+      const r = await db.query('SELECT is_verification_delegate FROM users WHERE user_id = $1', [req.user.id]);
+      if (r.rows.length && r.rows[0].is_verification_delegate) return next();
+      return res.status(403).json({ error: 'Access denied. Must be an HOD, College Admin, or assigned delegate.' });
+    } catch (e) {
+      console.error('Delegate access check failed:', e);
+      return res.status(500).json({ error: 'Failed access check.' });
+    }
+  }
+  return res.status(403).json({ error: 'Access denied. Must be an HOD, College Admin, or assigned delegate.' });
+};
+
 /**
  * @route GET /api/hod-admin/alumni-queue
  * @desc (HOD/Delegate) Gets all pending alumni verification requests for their department.
  */
-app.get('/api/hod-admin/alumni-queue', [authMiddleware, isHODorAdmin], async (req, res) => {
+app.get('/api/hod-admin/alumni-queue', [authMiddleware, alumniVerificationAccess], async (req, res) => {
   try {
     const { department_id } = req.user; // Get dept ID from token
 
@@ -1399,7 +1747,7 @@ app.get('/api/hod-admin/alumni-queue', [authMiddleware, isHODorAdmin], async (re
  * @route GET /api/hod-admin/document-link/:userId
  * @desc Returns a working Cloudinary URL for an alumni's verification document (auto-detects raw/image).
  */
-app.get('/api/hod-admin/document-link/:userId', [authMiddleware, isHODorAdmin], async (req, res) => {
+app.get('/api/hod-admin/document-link/:userId', [authMiddleware, alumniVerificationAccess], async (req, res) => {
   const { userId } = req.params;
 
   try {
@@ -1601,7 +1949,7 @@ app.get('/api/hod-admin/departments', [authMiddleware, isHODorAdmin], async (req
  * @desc (HOD) Handles Alumni Approval, Rejection, and Department Transfer.
  [cite_start]* [cite: 66, 67, 68]
  */
-app.post('/api/hod-admin/verify-alumnus', [authMiddleware, isHODorAdmin], async (req, res) => {
+app.post('/api/hod-admin/verify-alumnus', [authMiddleware, alumniVerificationAccess], async (req, res) => {
   const { userId, actionType, newDeptId, rejectionReason } = req.body;
   const { department_id } = req.user; // HOD's current department ID
 
@@ -1637,8 +1985,24 @@ app.post('/api/hod-admin/verify-alumnus', [authMiddleware, isHODorAdmin], async 
 
       message = `Alumnus ${user.full_name} approved and activated.`;
 
+      // Fetch dept + institute for personalization
+      const infoResult = await db.query(
+        `SELECT d.name AS department_name, u2.name AS college_name
+         FROM departments d
+         JOIN universities u2 ON d.college_id = u2.university_id
+         WHERE d.department_id = $1`,
+        [department_id]
+      );
+      const deptName = infoResult.rows[0]?.department_name || 'your department';
+      const collegeName = infoResult.rows[0]?.college_name || 'your institute';
+
       // Send activation email
-      await sendEmail(userEmail, 'Welcome to CareerNest!', `Congratulations, ${user.full_name}! Your alumni account has been verified and activated. You can now log in.`, `<b>Congratulations!</b> Your account is now active.`);
+      await sendEmail(
+        userEmail,
+        'Welcome to CareerNest!',
+        `Congratulations! ${user.full_name}. Your account is now active.`,
+        `<p>Congratulations! <b>${user.full_name}</b>. Your account is now active for ${deptName}, ${collegeName}.</p><p>Thanks,<br/>CareerNest</p>`
+      );
 
     } else if (actionType === 'reject') {
       // B. REJECT: Set status to suspended (so they can't log in)
@@ -1651,11 +2015,32 @@ app.post('/api/hod-admin/verify-alumnus', [authMiddleware, isHODorAdmin], async 
 
       message = `Alumnus ${user.full_name} rejected and suspended.`;
 
+      // Fetch dept + institute + rejector for personalization
+      const infoResult2 = await db.query(
+        `SELECT d.name AS department_name, u2.name AS college_name
+         FROM departments d
+         JOIN universities u2 ON d.college_id = u2.university_id
+         WHERE d.department_id = $1`,
+        [department_id]
+      );
+      const deptName2 = infoResult2.rows[0]?.department_name || 'your department';
+      const collegeName2 = infoResult2.rows[0]?.college_name || 'your institute';
+      const rejectorName = req.user.full_name || 'Admin';
+
       // Send rejection email with reason
       const reason = rejectionReason || 'The submitted verification document did not meet our criteria.';
-      await sendEmail(userEmail, 'Your CareerNest Verification Status', `We regret to inform you that your request was rejected. Reason: ${reason}`, `<p>Your request was rejected.</p><p>Reason: ${reason}</p>`);
+      await sendEmail(
+        userEmail,
+        'Your CareerNest Verification Status',
+        `Dear ${user.full_name}, unfortunately, your request to join the ${deptName2}, ${collegeName2} has been rejected by ${rejectorName}. Reason for Rejection: ${reason}`,
+        `<p>Dear ${user.full_name}, unfortunately, your request to join the <b>${deptName2}</b>, <b>${collegeName2}</b> has been rejected by <b>${rejectorName}</b>.</p><p><b>Reason for Rejection:</b> ${reason}</p><p>Thanks,<br/>CareerNest</p>`
+      );
 
     } else if (actionType === 'transfer') {
+      // Delegates (faculty) cannot transfer
+      if (req.user.role === 'Faculty') {
+        throw new Error('Delegates cannot transfer alumni between departments.');
+      }
       // C. TRANSFER: Update department ID
       if (!newDeptId) throw new Error('New department ID is required for transfer.');
 
@@ -1914,11 +2299,12 @@ app.get('/api/people', [authMiddleware], async (req, res) => {
     // 5. Get the paginated users
     const usersResult = await db.query(
       `SELECT 
-         u.user_id, u.full_name, u.role, u.graduation_year,
-         d.name as department_name,
-         p.headline,
-         u.user_id, u.full_name, u.role, u.graduation_year,
-         d.name as department_name,
+        u.user_id, u.full_name, u.role, u.graduation_year,
+        d.name as department_name,
+        p.headline,
+        p.profile_icon_url,
+        u.user_id, u.full_name, u.role, u.graduation_year,
+        d.name as department_name,
          -- Connection Status Subquery
          (SELECT 
             CASE
@@ -1951,7 +2337,7 @@ app.get('/api/people', [authMiddleware], async (req, res) => {
          ) as connection_id
        FROM users u
        LEFT JOIN departments d ON u.department_id = d.department_id
-       LEFT JOIN profiles p ON u.user_id = p.user_id
+      LEFT JOIN profiles p ON u.user_id = p.user_id
        WHERE ${whereClause}
        ORDER BY u.full_name ASC
        LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
@@ -2039,7 +2425,11 @@ app.post('/api/jobs', [authMiddleware], async (req, res) => {
       [college_id, id, title, companyName, location, jobType, description, applicationLink || null, applicationEmail || null]
     );
 
-    res.status(201).json(newJob.rows[0]);
+    const created = newJob.rows[0];
+    // Emit job:new to all users of the college (simple approach: need user list)
+    // For now broadcast to all connected sockets; clients will filter by college.
+    io.emit('jobs:new', { job_id: created.job_id, college_id: created.college_id, created_at: created.created_at });
+    res.status(201).json(created);
 
   } catch (err) {
     console.error('Error in /api/jobs (POST):', err);
@@ -2288,7 +2678,10 @@ app.post('/api/connections/request', [authMiddleware], async (req, res) => {
             [senderId, receiverId]
         );
 
-        res.status(201).json({ message: 'Connection request sent.', connection: newConnection.rows[0] });
+        const created = newConnection.rows[0];
+        // Notify receiver in real-time
+        io.to(`user-${receiverId}`).emit('connection:request:new', { connection_id: created.connection_id, sender_id: senderId });
+        res.status(201).json({ message: 'Connection request sent.', connection: created });
     } catch (err) {
         console.error('Error in /api/connections/request:', err);
         res.status(500).json({ error: 'An error occurred on the server.' });
@@ -2316,7 +2709,9 @@ app.post('/api/connections/accept', [authMiddleware], async (req, res) => {
             return res.status(404).json({ error: 'Pending request not found or you do not have permission to accept it.' });
         }
 
-        res.status(200).json({ message: 'Connection request accepted.', connection: result.rows[0] });
+        const accepted = result.rows[0];
+        io.to(`user-${accepted.sender_id}`).emit('connection:request:accepted', { connection_id: accepted.connection_id });
+        res.status(200).json({ message: 'Connection request accepted.', connection: accepted });
     } catch (err) {
         console.error('Error in /api/connections/accept:', err);
         res.status(500).json({ error: 'An error occurred on the server.' });
@@ -2420,12 +2815,18 @@ app.get('/api/chat/conversations', [authMiddleware], async (req, res) => {
            WHEN c.sender_id = $1 THEN r.role
            ELSE s.role
          END AS other_user_role,
+         CASE
+            WHEN c.sender_id = $1 THEN pr.profile_icon_url
+            ELSE ps.profile_icon_url
+         END AS other_user_profile_icon_url,
          lm.body as last_message,
          lm.created_at as last_message_at,
          COALESCE(uc.unread_count, 0) as unread_count -- Get the count
        FROM connections c
        LEFT JOIN users s ON c.sender_id = s.user_id
        LEFT JOIN users r ON c.receiver_id = r.user_id
+       LEFT JOIN profiles ps ON s.user_id = ps.user_id
+       LEFT JOIN profiles pr ON r.user_id = pr.user_id
        LEFT JOIN LastMessage lm ON c.connection_id = lm.connection_id AND lm.rn = 1
        LEFT JOIN UnreadCounts uc ON c.connection_id = uc.connection_id
        WHERE (c.sender_id = $1 OR c.receiver_id = $1)
@@ -2544,11 +2945,97 @@ app.post('/api/chat/send', [authMiddleware], async (req, res) => {
       [connectionId, senderId, body]
     );
 
-    res.status(201).json(newMessage.rows[0]);
+    const created = newMessage.rows[0];
+    io.to(`connection-${connectionId}`).emit('message:new', created);
+    console.log('[Socket Emit] message:new -> connection', connectionId, 'message', created.message_id);
+    res.status(201).json(created);
 
   } catch (err) {
     console.error('Error in /api/chat/send:', err);
     res.status(500).json({ error: 'An error occurred on the server.' });
+  }
+});
+
+
+/**
+ * @route POST /api/chat/upload
+ * @desc (Authenticated User) Uploads an image as a chat message (images only).
+ */
+app.post('/api/chat/upload', [authMiddleware, upload.single('file')], async (req, res) => {
+  const { connectionId, caption } = req.body;
+  const { id: senderId } = req.user;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+
+  try {
+    // 1. Verify this user is part of this connection
+    const connCheck = await db.query(
+      `SELECT * FROM connections 
+       WHERE connection_id = $1 AND (sender_id = $2 OR receiver_id = $2)` ,
+      [connectionId, senderId]
+    );
+
+    if (connCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You are not part of this conversation.' });
+    }
+
+    const connection = connCheck.rows[0];
+
+    // 2. Enforce that only accepted connections can upload attachments
+    if (connection.status !== 'accepted') {
+      return res.status(403).json({ error: 'Attachments are only allowed for accepted connections.' });
+    }
+
+    // 3. Ensure file is an image (Cloudinary supports images)
+    if (!file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Only image files are allowed.' });
+    }
+
+    // 4. Upload the image (default to Cloudinary, support S3)
+    let attachmentUrl;
+    const provider = (process.env.STORAGE_PROVIDER || 'cloudinary').toLowerCase();
+    if (provider === 's3') {
+      attachmentUrl = await s3Service.uploadFileFromPath(
+        file.path,
+        'career-nest/chat-images',
+        file.originalname
+      );
+    } else {
+      attachmentUrl = await uploadFile(
+        file.path,
+        'career-nest/chat-images',
+        file.originalname,
+        file.mimetype
+      );
+    }
+
+    // 5. Save the message with attachment_url and optional caption as body
+    const newMessage = await db.query(
+      `INSERT INTO messages (connection_id, sender_id, body, attachment_url)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [connectionId, senderId, caption || '', attachmentUrl]
+    );
+
+    const created = newMessage.rows[0];
+    io.to(`connection-${connectionId}`).emit('message:new', created);
+    console.log('[Socket Emit] message:new (image) -> connection', connectionId, 'message', created.message_id);
+    res.status(201).json(created);
+
+  } catch (err) {
+    console.error('Error in /api/chat/upload:', err);
+    res.status(500).json({ error: 'An error occurred while uploading image.' });
+  } finally {
+    try {
+      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (cleanupErr) {
+      console.warn('Temp file cleanup failed (chat upload):', cleanupErr);
+    }
   }
 });
 
@@ -2573,6 +3060,7 @@ app.get('/api/posts', [authMiddleware], async (req, res) => {
          u.full_name as author_name,
          u.role as author_role,
          pr.headline as author_headline,
+         pr.profile_icon_url as author_profile_icon_url,
          (SELECT json_agg(json_build_object('type', pm.media_type, 'url', pm.media_url))
           FROM post_media pm WHERE pm.post_id = p.post_id) as media,
          (SELECT COUNT(*) FROM post_comments c WHERE c.post_id = p.post_id) as comment_count,
@@ -2625,14 +3113,15 @@ app.post('/api/posts', [authMiddleware, upload.array('attachments', 5)], async (
     }
     // --- END OF FIX ---
 
-    // 1. Create the post to get a post_id
+    // 1. Create the post to get identifiers & timestamp
     const newPost = await client.query(
       `INSERT INTO posts (college_id, user_id, body)
        VALUES ($1, $2, $3)
-       RETURNING post_id`,
-      [college_id, user_id, body.trim()] // Also trim the body
+       RETURNING post_id, college_id, created_at`,
+      [college_id, user_id, body.trim()]
     );
-    const postId = newPost.rows[0].post_id;
+    const postRow = newPost.rows[0];
+    const postId = postRow.post_id;
 
     // 2. If files exist, upload them and link them to the post
     if (files && files.length > 0) {
@@ -2661,6 +3150,10 @@ app.post('/api/posts', [authMiddleware, upload.array('attachments', 5)], async (
     }
 
     await client.query('COMMIT');
+
+    // Emit posts:new so clients can update badges (clients filter by college)
+    io.emit('posts:new', { post_id: postRow.post_id, college_id: postRow.college_id, created_at: postRow.created_at });
+    console.log('[Socket Emit] posts:new -> post', postRow.post_id);
 
     res.status(201).json({ message: 'Post created successfully.' });
 
@@ -2772,6 +3265,7 @@ app.get('/api/posts/trending', [authMiddleware], async (req, res) => {
          u.full_name as author_name,
          u.role as author_role,
          pr.headline as author_headline,
+         pr.profile_icon_url as author_profile_icon_url,
          (SELECT json_agg(json_build_object('type', pm.media_type, 'url', pm.media_url))
           FROM post_media pm WHERE pm.post_id = p.post_id) as media,
          (SELECT COUNT(*) FROM post_comments c WHERE c.post_id = p.post_id) as comment_count,
@@ -2821,6 +3315,7 @@ app.get('/api/posts/:postId/comments', [authMiddleware], async (req, res) => {
          COALESCE(u.full_name, '[Deleted User]') as author_name,
          COALESCE(u.role, 'User') as author_role,
          p.headline as author_headline,
+        p.profile_icon_url as author_profile_icon_url,
          (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) as like_count,
          (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id AND cl.user_id = $1) > 0 as i_like
        FROM post_comments c
@@ -2875,6 +3370,7 @@ app.post('/api/posts/:postId/comment', [authMiddleware], async (req, res) => {
          u.user_id as author_id, COALESCE(u.full_name, '[Deleted User]') as author_name, 
          COALESCE(u.role, 'User') as author_role,
          p.headline as author_headline,
+         p.profile_icon_url as author_profile_icon_url,
          '0' as like_count,
          false as i_like
        FROM post_comments c
@@ -3185,7 +3681,12 @@ app.get('/api/hod-admin/reports', [authMiddleware, isHODorAdmin], async (req, re
          p.body AS post_body,
          pc.body AS comment_body,
          reporter.full_name AS reporter_name,
-         author.full_name AS author_name
+         author.full_name AS author_name,
+         /* Aggregate post media if this report is for a post */
+         CASE WHEN rc.post_id IS NOT NULL THEN (
+           SELECT json_agg(json_build_object('type', pm.media_type, 'url', pm.media_url))
+           FROM post_media pm WHERE pm.post_id = rc.post_id
+         ) ELSE NULL END AS media
        FROM reported_content rc
        LEFT JOIN posts p ON rc.post_id = p.post_id
        LEFT JOIN post_comments pc ON rc.comment_id = pc.comment_id
@@ -3694,7 +4195,54 @@ app.post('/api/profile/verify-secondary-email', [authMiddleware], async (req, re
 });
 
 // 4. Start the server
-app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+server.listen(port, () => {
+  console.log(`Server (with Socket.IO) listening at http://localhost:${port}`);
+});
+
+/**
+ * @route GET /api/notifications/summary
+ * @desc Returns counts for sidebar badges.
+ */
+app.get('/api/notifications/summary', [authMiddleware], async (req, res) => {
+  const { id: userId, college_id } = req.user;
+  try {
+    const pendingRequestsResult = await db.query(
+      `SELECT COUNT(*) FROM connections WHERE receiver_id = $1 AND status = 'pending'`,
+      [userId]
+    );
+    const unreadConversationsResult = await db.query(
+      `SELECT COUNT(DISTINCT m.connection_id) AS cnt
+       FROM messages m
+       JOIN connections c ON m.connection_id = c.connection_id
+       WHERE (c.sender_id = $1 OR c.receiver_id = $1) AND m.sender_id != $1 AND m.read_at IS NULL`,
+      [userId]
+    );
+    const newJobsResult = await db.query(
+      `SELECT MAX(created_at) AS latest, COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS recent_count
+       FROM jobs WHERE college_id = $1`,
+      [college_id]
+    );
+    const newPostsResult = await db.query(
+      `SELECT MAX(created_at) AS latest, COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS recent_count
+       FROM posts WHERE college_id = $1`,
+      [college_id]
+    );
+    // Placeholder mentions count (requires mention tracking implementation)
+    // For now always 0; later can query a mentions table.
+    const mentionsCount = 0;
+
+    res.status(200).json({
+      pendingRequests: parseInt(pendingRequestsResult.rows[0].count, 10) || 0,
+      unreadChats: parseInt(unreadConversationsResult.rows[0].cnt, 10) || 0,
+      newJobsRecent: parseInt(newJobsResult.rows[0].recent_count, 10) || 0,
+      latestJobCreatedAt: newJobsResult.rows[0].latest,
+      newPostsRecent: parseInt(newPostsResult.rows[0].recent_count, 10) || 0,
+      latestPostCreatedAt: newPostsResult.rows[0].latest,
+      newMentions: mentionsCount
+    });
+  } catch (err) {
+    console.error('Error in /api/notifications/summary:', err);
+    res.status(500).json({ error: 'Failed to load notification summary.' });
+  }
 });
 

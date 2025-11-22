@@ -1,12 +1,11 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 
+// The 'pg' library automatically uses the DATABASE_URL environment variable
+// if it's available. The connection string from Neon includes the necessary
+// `sslmode=require` parameter, so no extra SSL config is needed here.
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
+  connectionString: process.env.DATABASE_URL,
 });
 
 module.exports = {

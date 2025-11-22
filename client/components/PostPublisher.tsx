@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@/context/UserContext'
 import { Paperclip, Send, X, ArrowLeft, ArrowRight, FileText, Trash2 } from 'lucide-react'
+import Avatar from './Avatar';
 import Image from 'next/image';
 import { getCaretCoordinates } from '@/utils/caretUtils'; // Import the new utility
 
@@ -398,6 +399,13 @@ export default function PostPublisher({ postToEdit, onClose, onPostCreated }: Po
           </div>
 
           <div className="p-6 max-h-[70vh] overflow-y-auto">
+            <div className="flex items-center gap-3 mb-4">
+              <Avatar src={user?.profileIconUrl} name={user?.fullName || 'User'} size={40} />
+              <div>
+                <p className="font-semibold text-sm">{user?.fullName}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Share an update with your network</p>
+              </div>
+            </div>
             <form id="post-form" onSubmit={handlePost}>
               <div className="relative">
                 <textarea

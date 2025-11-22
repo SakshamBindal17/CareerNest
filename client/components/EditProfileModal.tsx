@@ -10,6 +10,7 @@ interface EditProfileModalProps {
     profile: Profile;
     onClose: () => void;
     onProfileUpdate: (updatedProfile: Profile) => void;
+    initialSection?: Section;
 }
 
 type Section = 'core' | 'experience' | 'education';
@@ -69,13 +70,29 @@ function CrudForm<T extends { [key: string]: any }>({ item, onSave, onCancel, fi
 }
 
 
-const EditProfileModal: FC<EditProfileModalProps> = ({ profile, onClose, onProfileUpdate }) => {
-    const [activeSection, setActiveSection] = useState<Section>('core');
+const EditProfileModal: FC<EditProfileModalProps> = ({ profile, onClose, onProfileUpdate, initialSection = 'core' }) => {
+    const [activeSection, setActiveSection] = useState<Section>(initialSection);
     const [formData, setFormData] = useState<Profile>(profile);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [profileIconFile, setProfileIconFile] = useState<File | null>(null);
     const [coverPhotoFile, setCoverPhotoFile] = useState<File | null>(null);
+
+    // Generic CRUD helper for experience/education endpoints
+    const handleCrud = async (endpoint: string, method: 'POST' | 'PUT' | 'DELETE', body?: any) => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/api/${endpoint}`, {
+            method,
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                ...(body ? { 'Content-Type': 'application/json' } : {})
+            },
+            body: body ? JSON.stringify(body) : undefined
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Request failed: ${method} ${endpoint}`);
+        return data; // For POST/PUT this is the created/updated row object
+    };
 
     // State for Experience and Education
     const [localExperience, setLocalExperience] = useState<Experience[]>(profile.experience || []);
@@ -158,66 +175,76 @@ const EditProfileModal: FC<EditProfileModalProps> = ({ profile, onClose, onProfi
         setLoading(true);
         setError(null);
         try {
-            // 1. Update core profile info and get back the base profile
+            // 1. Update core profile info
             await handleCoreSubmit();
 
-            // 2. Sync Experience
+            // 2. Sync Experience (transform snake_case to camelCase for API)
             const originalExpIds = profile.experience.map(e => e.experience_id);
             const currentExpIds = localExperience.map(e => e.experience_id);
 
-            // DELETE experience items that are no longer present
+            // Deletes
             for (const id of originalExpIds) {
                 if (!currentExpIds.includes(id)) {
                     await handleCrud(`profile/experience/${id}`, 'DELETE');
                 }
             }
-            // ADD or UPDATE experience items
+            // Adds / Updates
             for (const item of localExperience) {
+                const body = {
+                    title: item.title || '',
+                    company: item.company || '',
+                    location: item.location || '',
+                    startDate: item.start_date || new Date().toISOString().split('T')[0],
+                    endDate: item.end_date || null,
+                    description: item.description || ''
+                };
                 if (item.experience_id && originalExpIds.includes(item.experience_id)) {
-                    // This is an existing item, check if it changed before sending PUT
                     const originalItem = profile.experience.find(e => e.experience_id === item.experience_id);
                     if (JSON.stringify(originalItem) !== JSON.stringify(item)) {
-                         await handleCrud(`profile/experience/${item.experience_id}`, 'PUT', item);
+                        await handleCrud(`profile/experience/${item.experience_id}`, 'PUT', body);
                     }
                 } else {
-                    // This is a new item
-                    await handleCrud('profile/experience', 'POST', item);
+                    await handleCrud('profile/experience', 'POST', body);
                 }
             }
 
-            // 3. Sync Education
+            // 3. Sync Education (transform snake_case to camelCase for API)
             const originalEduIds = profile.education.map(e => e.education_id);
             const currentEduIds = localEducation.map(e => e.education_id);
 
-            // DELETE education items
             for (const id of originalEduIds) {
                 if (!currentEduIds.includes(id)) {
                     await handleCrud(`profile/education/${id}`, 'DELETE');
                 }
             }
-            // ADD or UPDATE education items
             for (const item of localEducation) {
+                const body = {
+                    school: item.school || '',
+                    degree: item.degree || '',
+                    fieldOfStudy: item.field_of_study || '',
+                    startDate: item.start_date || new Date().toISOString().split('T')[0],
+                    endDate: item.end_date || null
+                };
                 if (item.education_id && originalEduIds.includes(item.education_id)) {
                     const originalItem = profile.education.find(e => e.education_id === item.education_id);
                     if (JSON.stringify(originalItem) !== JSON.stringify(item)) {
-                        await handleCrud(`profile/education/${item.education_id}`, 'PUT', item);
+                        await handleCrud(`profile/education/${item.education_id}`, 'PUT', body);
                     }
                 } else {
-                    await handleCrud('profile/education', 'POST', item);
+                    await handleCrud('profile/education', 'POST', body);
                 }
             }
 
-            // 4. Fetch the final, fully updated profile from the server
+            // 4. Fetch updated profile
             const finalProfileRes = await fetch(`${API_URL}/api/profile/${profile.user_id}`, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             const finalProfile = await finalProfileRes.json();
-
             onProfileUpdate(finalProfile);
             onClose();
         } catch (err) {
             if (err instanceof Error) setError(err.message);
-            else setError("An unknown error occurred.");
+            else setError('An unknown error occurred.');
         } finally {
             setLoading(false);
         }

@@ -3,9 +3,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import ThemeSwitcher from '@/components/ThemeSwitcher';
 import ToastNotification from '@/components/ToastNotification';
-import { ChevronLeft, ChevronRight, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Trash2, Users, UserCheck, UserCog, Hourglass } from 'lucide-react';
 
 const API_URL = 'http://localhost:3001';
 
@@ -45,6 +44,10 @@ export default function HODDashboard() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roster, setRoster] = useState<UserRosterItem[]>([]);
   const [rosterTotal, setRosterTotal] = useState(0);
+  const [studentCount, setStudentCount] = useState(0);
+  const [facultyCount, setFacultyCount] = useState(0);
+  const [verifiedAlumniCount, setVerifiedAlumniCount] = useState(0);
+  const [pendingAlumniCount, setPendingAlumniCount] = useState(0);
 
   // UI/Loading/Message states
   const [loading, setLoading] = useState(true);
@@ -209,6 +212,14 @@ export default function HODDashboard() {
           setRoster(data.users);
           setRosterTotal(data.total);
 
+          // Derive simple role-based stats from current page plus total where possible
+          const students = data.users.filter((u: UserRosterItem) => u.role === 'Student').length;
+          const faculty = data.users.filter((u: UserRosterItem) => u.role === 'Faculty').length;
+          const verifiedAlumni = data.users.filter((u: UserRosterItem) => u.role === 'Alumni' && u.status === 'active').length;
+          setStudentCount(students);
+          setFacultyCount(faculty);
+          setVerifiedAlumniCount(verifiedAlumni);
+
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error connecting to server.');
       } finally {
@@ -225,10 +236,11 @@ export default function HODDashboard() {
       const authHeader = { 'Authorization': `Bearer ${token}` };
 
       // Fetch Alumni Queue
-  const queueRes = await fetch(`${API_URL}/api/hod-admin/alumni-queue`, { headers: authHeader });
-  const queueData = await readJson(queueRes);
-  if (!queueRes.ok) throw new Error(queueData.error || 'Failed to fetch alumni queue.');
+      const queueRes = await fetch(`${API_URL}/api/hod-admin/alumni-queue`, { headers: authHeader });
+      const queueData = await readJson(queueRes);
+      if (!queueRes.ok) throw new Error(queueData.error || 'Failed to fetch alumni queue.');
       setQueue(queueData);
+      setPendingAlumniCount(Array.isArray(queueData) ? queueData.length : 0);
 
       // Fetch Departments for the 'Transfer' option
       // Prefer HOD-friendly endpoint (works for HOD and College Admin)
@@ -299,17 +311,12 @@ export default function HODDashboard() {
 
   const handleVerificationAction = async (userId: number, action: 'approve' | 'reject' | 'transfer') => {
     clearMessages();
-  type VerifyPayload = { userId: number; actionType: 'approve' | 'reject' | 'transfer'; newDeptId?: number; rejectionReason?: string };
+  type VerifyPayload = { userId: number; actionType: 'approve' | 'reject' | 'transfer'; newDeptId?: number };
   const payload: VerifyPayload = { userId, actionType: action };
-    let reason = '';
     let newDeptId = null;
     let confirmText = '';
 
-    if (action === 'reject') {
-      reason = prompt('Enter rejection reason (optional):') || '';
-  (payload as VerifyPayload).rejectionReason = reason;
-      confirmText = 'Reject this alumnus? They will be notified.';
-    } else if (action === 'transfer') {
+    if (action === 'transfer') {
       // Present the HOD with a list of department names for better UX
       const deptList = departments.map(d => `${d.department_id}: ${d.name}`).join('\n');
       const deptInput = prompt(`Enter the ID of the department to transfer to:\n\n${deptList}`);
@@ -347,6 +354,44 @@ export default function HODDashboard() {
 
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : `Failed to perform ${action}.`);
+    }
+  };
+
+  // Rejection modal state & handlers
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectUserId, setRejectUserId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const openRejectModal = (userId: number) => {
+    setRejectUserId(userId);
+    setRejectReason('');
+    setShowRejectModal(true);
+  };
+
+  const submitReject = async () => {
+    if (rejectUserId == null) return;
+    clearMessages();
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) { router.push('/login'); return; }
+      const payload = {
+        userId: rejectUserId,
+        actionType: 'reject',
+        rejectionReason: rejectReason.trim() || ''
+      };
+      const res = await fetch(`${API_URL}/api/hod-admin/verify-alumnus`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reject alumnus.');
+      setMessage(data.message);
+      setShowRejectModal(false);
+      setRejectUserId(null);
+      fetchQueueAndDeps();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reject alumnus.');
     }
   };
 
@@ -466,21 +511,55 @@ export default function HODDashboard() {
           >
             ← Back to Main
           </button>
-          <ThemeSwitcher />
+          {/* ThemeSwitcher removed */}
         </div>
       </nav>
 
       {/* Page Content */}
-      <div className="p-8 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="p-8 max-w-7xl mx-auto space-y-8">
 
-        {/* COLUMN 1: Verification Queue */}
-        <div className="lg:col-span-1 space-y-6">
-            <h2 className="mb-4 text-2xl font-bold">Alumni Verification Queue ({queue.length})</h2>
+        {/* Top Stats Widget with Icon Badges */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            label="Total Students"
+            value={studentCount}
+            icon={<Users className="w-5 h-5" />}
+            accent="emerald"
+          />
+          <StatCard
+            label="Total Faculty"
+            value={facultyCount}
+            icon={<UserCog className="w-5 h-5" />}
+            accent="indigo"
+          />
+          <StatCard
+            label="Verified Alumni"
+            value={verifiedAlumniCount}
+            icon={<UserCheck className="w-5 h-5" />}
+            accent="sky"
+          />
+          <StatCard
+            label="Pending Alumni"
+            value={pendingAlumniCount}
+            icon={<Hourglass className="w-5 h-5" />}
+            accent="amber"
+          />
+        </section>
+
+        {/* Main Columns */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+        {/* COLUMN 1: Verification Queue (compact, scrollable) with tools beneath */}
+        <div className="lg:col-span-1 space-y-4">
+            <h2 className="text-2xl font-bold flex items-center justify-between">
+              <span>Alumni Verification Queue</span>
+              <span className="text-sm font-semibold text-amber-500">{queue.length} pending</span>
+            </h2>
             {loading && <p>Loading queue...</p>}
             {!loading && queue.length === 0 && <p className="text-gray-600 dark:text-gray-400">No alumni pending verification.</p>}
 
-            {/* List of pending alumni */}
-            <div className="space-y-4">
+            {/* List of pending alumni (scrollable widget) */}
+            <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
                 {queue.map((alumnus) => (
                   <div key={alumnus.user_id} className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md border border-amber-300 dark:border-amber-700">
                     {/* Details and Actions */}
@@ -491,81 +570,51 @@ export default function HODDashboard() {
                         <p className="text-xs text-gray-500">Roll No: {alumnus.institute_roll_number}</p>
                       )}
                       <p className="text-xs text-gray-500">Email: {alumnus.personal_email}</p>
-                      {alumnus.verification_document_url && (
-                        <div className="flex flex-wrap gap-3 mt-1">
-                          {getDocumentLinks(alumnus.verification_document_url).map((l, idx) => (
-                            <a
-                              key={idx}
-                              href={l.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-indigo-600 dark:text-indigo-400 underline"
-                            >
-                              {idx === 0 ? 'View Verification Document' : l.label}
-                            </a>
-                          ))}
-                        </div>
-                      )}
+                      {/* Removed duplicate document links; single button row below now handles view */}
                     </div>
                     <div className="mt-3 flex gap-2 justify-end">
-                      <button
-                        onClick={() => openDocumentAuto(alumnus.user_id, alumnus.verification_document_url)}
+                      <a
+                        href={alumnus.verification_document_url || '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="bg-blue-600 text-white px-3 py-1 rounded-md hover:bg-blue-700 text-xs"
                       >
-                        Open Document (auto)
+                        View Verification Document
+                      </a>
+                      <button
+                        onClick={() => openRejectModal(alumnus.user_id)}
+                        className="bg-red-600 text-white px-3 py-1 rounded-md hover:bg-red-700 text-xs"
+                      >
+                        Reject
                       </button>
                       <button
-                        onClick={async () => {
-                          try {
-                            const token = localStorage.getItem('token');
-                            if (!token) { router.push('/login'); return; }
-                            const resp = await fetch(`${API_URL}/api/hod-admin/document/${alumnus.user_id}`, {
-                              headers: { 'Authorization': `Bearer ${token}` }
-                            });
-                            if (!resp.ok) {
-                              const txt = await resp.text();
-                              throw new Error(`Proxy fetch failed (${resp.status}). ${txt.slice(0, 200)}`);
-                            }
-                            const blob = await resp.blob();
-                            const url = URL.createObjectURL(blob);
-                            window.open(url, '_blank', 'noopener,noreferrer');
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : 'Proxy document download failed.');
-                          }
-                        }}
-                        className="bg-indigo-600 text-white px-3 py-1 rounded-md hover:bg-indigo-700 text-xs"
+                        onClick={() => handleVerificationAction(alumnus.user_id, 'approve')}
+                        className="bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 text-xs"
                       >
-                        Download via Proxy
+                        Approve
                       </button>
-                        <button
-                          onClick={() => handleVerificationAction(alumnus.user_id, 'reject')}
-                          className="bg-red-600 text-white px-3 py-1 rounded-md hover:bg-red-700 text-xs"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          onClick={() => handleVerificationAction(alumnus.user_id, 'approve')}
-                          className="bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 text-xs"
-                        >
-                          Approve
-                        </button>
                     </div>
                   </div>
                 ))}
             </div>
 
-            <h2 className="mt-8 mb-4 text-2xl font-bold">Department Tools</h2>
-      <button 
-        onClick={openDelegatesModal}
-        className="w-full bg-indigo-500 text-white p-3 rounded-lg hover:bg-indigo-600"
-      >
-        Manage Verification Delegates
-      </button>
+            {/* Department Tools under alumni verification section */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <h2 className="mb-3 text-xl font-bold">Department Tools</h2>
+              <button 
+                onClick={openDelegatesModal}
+                className="w-full bg-indigo-500 text-white p-3 rounded-lg hover:bg-indigo-600"
+              >
+                Manage Verification Delegates
+              </button>
+            </div>
         </div>
 
         {/* COLUMN 2: Department Roster (Main Management Area) */}
         <div className="lg:col-span-2 space-y-6">
             {renderDepartmentRoster()}
+        </div>
+
         </div>
 
         {/* Delegates Modal */}
@@ -611,9 +660,75 @@ export default function HODDashboard() {
           </div>
         )}
 
+        {showRejectModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Reject Alumnus</h3>
+                <button onClick={() => setShowRejectModal(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+              </div>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Optional: provide a reason to include in the email.</p>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                rows={4}
+                placeholder="Reason for rejection (optional)"
+                className="w-full rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm dark:bg-gray-700 dark:text-white"
+              />
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  onClick={() => setShowRejectModal(false)}
+                  className="px-4 py-2 rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm"
+                >Cancel</button>
+                <button
+                  onClick={submitReject}
+                  className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm"
+                >Reject</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <ToastNotification message={message} error={error} clearMessages={clearMessages} />
 
+      </div>
+    </div>
+  );
+}
+
+// Lightweight stat card component (placed at file end for simplicity)
+function StatCard({
+  label,
+  value,
+  icon,
+  accent
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  accent: 'emerald' | 'indigo' | 'sky' | 'amber';
+}) {
+  const accentMap: Record<string, { ring: string; text: string; bg: string }> = {
+    emerald: { ring: 'ring-emerald-400/40', text: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+    indigo: { ring: 'ring-indigo-400/40', text: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+    sky: { ring: 'ring-sky-400/40', text: 'text-sky-500', bg: 'bg-sky-500/10' },
+    amber: { ring: 'ring-amber-400/40', text: 'text-amber-500', bg: 'bg-amber-500/10' }
+  };
+
+  const colors = accentMap[accent];
+
+  return (
+    <div className={`relative rounded-lg bg-white dark:bg-gray-800 shadow-sm border border-gray-200 dark:border-gray-700 p-4 overflow-hidden group`}>      
+      <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-gray-50/0 to-gray-200/10 dark:from-gray-800/0 dark:to-gray-700/20`} />
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-[10px] font-semibold tracking-wider uppercase text-gray-500 dark:text-gray-400">{label}</p>
+          <p className={`mt-1 text-2xl font-bold ${colors.text}`}>{value}</p>
+        </div>
+        <div className={`flex items-center justify-center w-10 h-10 rounded-full ${colors.bg} ${colors.text} ring-2 ${colors.ring}`}>
+          {icon}
+        </div>
       </div>
     </div>
   );

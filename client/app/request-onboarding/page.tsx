@@ -4,7 +4,6 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import ThemeSwitcher from '@/components/ThemeSwitcher'
 import OtpInput from '@/components/OtpInput'; // <-- ADD THIS
 
 // Define our API's base URL
@@ -115,9 +114,7 @@ export default function RequestOnboardingPage() {
       {/* --- Right Form Pane --- */}
       <div className="relative flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-gray-900">
 
-        <div className="absolute top-4 right-4">
-          <ThemeSwitcher />
-        </div>
+        {/* ThemeSwitcher removed */}
 
         <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md dark:bg-gray-800">
 

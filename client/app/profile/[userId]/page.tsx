@@ -34,11 +34,13 @@ interface AboutSectionProps {
 interface ExperienceSectionProps {
     experience: Experience[];
     isOwnProfile: boolean;
+    onAdd: () => void;
 }
 
 interface EducationSectionProps {
     education: Education[];
     isOwnProfile: boolean;
+    onAdd: () => void;
 }
 
 const ProfileHeader: FC<ProfileHeaderProps> = ({ profile, isOwnProfile, onEdit, onAction }) => (
@@ -131,11 +133,11 @@ const AboutSection: FC<AboutSectionProps> = ({ about }) => (
     </div>
 );
 
-const ExperienceSection: FC<ExperienceSectionProps> = ({ experience, isOwnProfile }) => (
+const ExperienceSection: FC<ExperienceSectionProps> = ({ experience, isOwnProfile, onAdd }) => (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-6">
         <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white">Experience</h2>
-            {isOwnProfile && <button className="text-blue-500 hover:text-blue-600"><FaPlus size={20} /></button>}
+            {isOwnProfile && <button onClick={onAdd} className="text-blue-500 hover:text-blue-600"><FaPlus size={20} /></button>}
         </div>
         <div className="space-y-4">
             {experience?.length > 0 ? experience.map(exp => (
@@ -164,11 +166,11 @@ const ExperienceSection: FC<ExperienceSectionProps> = ({ experience, isOwnProfil
     </div>
 );
 
-const EducationSection: FC<EducationSectionProps> = ({ education, isOwnProfile }) => (
+const EducationSection: FC<EducationSectionProps> = ({ education, isOwnProfile, onAdd }) => (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-6">
         <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white">Education</h2>
-            {isOwnProfile && <button className="text-blue-500 hover:text-blue-600"><FaPlus size={20} /></button>}
+            {isOwnProfile && <button onClick={onAdd} className="text-blue-500 hover:text-blue-600"><FaPlus size={20} /></button>}
         </div>
         <div className="space-y-4">
             {education?.length > 0 ? education.map(edu => (
@@ -214,6 +216,12 @@ export default function ProfilePage() {
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [isEditModalOpen, setEditModalOpen] = useState(false);
+    const [modalInitialSection, setModalInitialSection] = useState<'core' | 'experience' | 'education'>('core');
+
+    const handleAddSection = (section: 'experience' | 'education') => {
+        setModalInitialSection(section);
+        setEditModalOpen(true);
+    };
 
     const fetchProfile = useCallback(async () => {
         if (!userId) return;
@@ -309,8 +317,8 @@ export default function ProfilePage() {
                 <ToastNotification message={message} error={error} clearMessages={() => { setMessage(null); setError(null); }} />
                 <ProfileHeader profile={profile} isOwnProfile={isOwnProfile} onEdit={() => setEditModalOpen(true)} onAction={handleAction} />
                 <AboutSection about={profile.about} />
-                <ExperienceSection experience={profile.experience} isOwnProfile={isOwnProfile} />
-                <EducationSection education={profile.education} isOwnProfile={isOwnProfile} />
+                <ExperienceSection experience={profile.experience} isOwnProfile={isOwnProfile} onAdd={() => handleAddSection('experience')}/>
+                <EducationSection education={profile.education} isOwnProfile={isOwnProfile} onAdd={() => handleAddSection('education')}/>
                 <ActivityFeed />
 
                 {isEditModalOpen && (
@@ -321,6 +329,7 @@ export default function ProfilePage() {
                             setProfile(prevProfile => ({...prevProfile, ...updatedProfile}));
                             setMessage("Profile updated successfully!");
                         }}
+                        initialSection={modalInitialSection}
                     />
                 )}
             </div>

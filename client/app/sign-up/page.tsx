@@ -5,7 +5,6 @@ import React, { useState, useEffect } from 'react'
 import Link from 'next/link' 
 import Image from 'next/image'
 import PasswordStrength from '@/components/PasswordStrength'
-import ThemeSwitcher from '@/components/ThemeSwitcher'
 import OtpInput from '@/components/OtpInput'
 import { Eye, EyeOff } from 'lucide-react'
 
@@ -226,9 +225,7 @@ export default function SignUpPage() {
 
       {/* --- Right Form Pane --- */}
       <div className="relative flex min-h-screen items-center justify-center bg-gray-50 p-4 py-12 dark:bg-gray-900">
-        <div className="absolute top-4 right-4">
-          <ThemeSwitcher />
-        </div>
+        {/* ThemeSwitcher removed */}
 
         <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md dark:bg-gray-800">
           <h2 className="mb-6 text-center text-3xl font-bold text-gray-900 dark:text-white">

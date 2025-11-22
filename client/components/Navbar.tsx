@@ -4,7 +4,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { ArrowRight } from 'lucide-react'
-import ThemeSwitcher from './ThemeSwitcher' // <-- Import
 import { useAuth } from '@/context/UserContext' // Import useAuth
 import Avatar from './Avatar'; // Import Avatar
 
@@ -21,7 +20,6 @@ export default function Navbar() {
           {!loading && user ? (
             <>
               {/* Add other authenticated nav links here if needed */}
-              <ThemeSwitcher />
               <Link href={`/profile/${user.id}`}>
                 <div className="cursor-pointer">
                   <Avatar src={user.profileIconUrl} name={user.fullName} size={32} />
@@ -40,7 +38,6 @@ export default function Navbar() {
                 Sign Up
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
-              <ThemeSwitcher />
             </>
           )}
         </div>

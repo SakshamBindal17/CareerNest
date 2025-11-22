@@ -345,7 +345,9 @@ export default function PostCard({ post, onPostUpdated }: {
         {/* Post Header */}
         <div className="flex justify-between items-start">
           <div className="flex items-center space-x-3">
-            <Avatar src={post.author_profile_icon_url} name={post.author_name} size={40} />
+            <Link href={`/profile/${post.author_id}`} className="group">
+              <Avatar src={post.author_profile_icon_url} name={post.author_name} size={40} />
+            </Link>
             <div>
               <Link href={`/profile/${post.author_id}`} className="font-bold text-gray-900 dark:text-white hover:underline">
                 {post.author_name || '[Deleted User]'}
