@@ -38,9 +38,22 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
     if (!token || !userData) {
       setLoading(false);
-      // Allow access to public routes
-      const publicPaths = ['/login', '/sign-up', '/forgot-password', '/reset-password'];
-      if (!publicPaths.includes(pathname)) {
+      // Allow access to public routes. Use prefix matching because some routes
+      // may appear with or without trailing slashes or small variants.
+      const publicPrefixes = [
+        '/', // home is public
+        '/login',
+        '/sign-up', '/signup',
+        '/forgot-password',
+        '/reset-password',
+        '/api/public'
+      ];
+
+      // If pathname is not yet available, don't redirect yet.
+      if (!pathname) return;
+
+      const isPublic = publicPrefixes.some(prefix => pathname.toLowerCase().startsWith(prefix));
+      if (!isPublic) {
         router.push('/login');
       }
       return;

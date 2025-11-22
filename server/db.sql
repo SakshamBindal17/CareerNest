@@ -155,11 +155,12 @@ to prevent two universities from having the same name.
 ALTER TABLE universities
 ADD CONSTRAINT unique_university_name UNIQUE (name);
 
-/* Add a "dept_code" (Department ID) to the departments table
-   and ensure it is unique within a college.
+/* Add a "dept_code" (Department code) to the departments table
+    and ensure it is unique within a college.
+    Use VARCHAR because dept codes often include letters (e.g., "CSE", "ME-01").
 */
 ALTER TABLE departments
-ADD COLUMN dept_code ID;
+ADD COLUMN dept_code VARCHAR(50);
 
 ALTER TABLE departments
 ADD CONSTRAINT unique_dept_code_per_college

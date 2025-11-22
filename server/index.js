@@ -776,6 +776,48 @@ app.post('/api/admin/reject-request', async (req, res) => {
   }
 });
 
+/**
+ * @route GET /api/admin/stats
+ * @desc (ADMIN) Returns platform-wide statistics for the Super Admin dashboard.
+ * Includes total users, breakdown by role, total universities and pending onboarding requests.
+ */
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    // Total users
+    const totalUsersResult = await db.query(`SELECT COUNT(*) AS count FROM users`);
+    const totalUsers = parseInt(totalUsersResult.rows[0].count, 10) || 0;
+
+    // Active users grouped by role
+    const rolesResult = await db.query(
+      `SELECT role, COUNT(*) as count FROM users WHERE status = 'active' GROUP BY role`
+    );
+    const roleBreakdown = {};
+    for (const r of rolesResult.rows) {
+      roleBreakdown[r.role] = parseInt(r.count, 10);
+    }
+
+    // Total universities
+    const universitiesResult = await db.query(`SELECT COUNT(*) AS count FROM universities`);
+    const totalUniversities = parseInt(universitiesResult.rows[0].count, 10) || 0;
+
+    // Pending (verified) onboarding requests
+    const pendingRequestsResult = await db.query(
+      `SELECT COUNT(*) AS count FROM onboarding_requests WHERE is_verified = true`
+    );
+    const pendingOnboardingRequests = parseInt(pendingRequestsResult.rows[0].count, 10) || 0;
+
+    res.status(200).json({
+      totalUsers,
+      roleBreakdown,
+      totalUniversities,
+      pendingOnboardingRequests,
+    });
+  } catch (err) {
+    console.error('Error in /api/admin/stats:', err);
+    res.status(500).json({ error: 'An error occurred while fetching admin stats.' });
+  }
+});
+
 
 /* ---------------------------------- */
 /* --- COLLEGE ADMIN API ROUTES --- */
@@ -1847,7 +1889,8 @@ app.get('/api/people', [authMiddleware], async (req, res) => {
     }
 
     if (dept !== 'all') {
-      whereClause += ` AND department_id = $${paramIndex++}`;
+      // Qualify department_id with the users table alias to avoid ambiguity
+      whereClause += ` AND u.department_id = $${paramIndex++}`;
       params.push(dept);
     }
 
