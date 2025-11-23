@@ -23,42 +23,19 @@ app.set('trust proxy', 1);
 
 const server = http.createServer(app);
 
-// Dynamic CORS origin list (comma separated) or allow all if not set.
-// NOTE: For production security tighten CORS_ORIGINS to your actual domains, e.g.
-// CORS_ORIGINS=https://app.careernest.com,https://api.careernest.com
-const rawOrigins = process.env.CORS_ORIGINS || 'http://localhost:3000';
-const allowedOrigins = rawOrigins.split(',').map(o => o.trim()).filter(Boolean);
-
-// Shared CORS config for Express
+// Shared CORS config for Express – allow all origins for now
+// (in production you may want to restrict this to specific domains).
 const corsConfig = {
-  origin: (origin, cb) => {
-    // Allow non-browser requests (no origin) and any origin if wildcard requested
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.includes('*')) return cb(null, true);
-    // If we explicitly listed origins, validate; else (no env) allow all to avoid dev friction
-    if (allowedOrigins.length === 0 || allowedOrigins.some(o => origin === o || origin.startsWith(o))) {
-      return cb(null, true);
-    }
-    console.warn('[CORS] Blocked origin:', origin);
-    return cb(new Error('Not allowed by CORS'));
-  },
+  origin: true, // reflect request origin, effectively allowing all
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
 };
 
-// Socket.IO with permissive dynamic origin (mirrors Express CORS)
+// Socket.IO CORS: also allow all origins to match Express behavior
 const io = new Server(server, {
   cors: {
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes('*')) return cb(null, true);
-      if (allowedOrigins.length === 0 || allowedOrigins.some(o => origin === o || origin.startsWith(o))) {
-        return cb(null, true);
-      }
-      console.warn('[Socket CORS] Blocked origin:', origin);
-      return cb(new Error('Socket origin not allowed'));
-    },
+    origin: true,
     methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
     credentials: true
   }
