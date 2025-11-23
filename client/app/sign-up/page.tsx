@@ -7,8 +7,7 @@ import Image from 'next/image'
 import PasswordStrength from '@/components/PasswordStrength'
 import OtpInput from '@/components/OtpInput'
 import { Eye, EyeOff } from 'lucide-react'
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 type College = { university_id: number; name: string; domains: string[] }; 
 type Department = { department_id: number; name: string; };

@@ -4,9 +4,9 @@
 import React, { useState, useEffect } from 'react'
 import AdminStatCard from '@/components/AdminStatCard'
 import { useRouter } from 'next/navigation'
+import { API_URL } from '@/utils/api';
 import { useAuth } from '@/context/UserContext'
 
-const API_URL = 'http://localhost:3001';
 
 type PendingUniversity = {
   request_id: number;

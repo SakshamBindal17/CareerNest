@@ -7,8 +7,7 @@ import { Paperclip, Send, X, ArrowLeft, ArrowRight, FileText, Trash2 } from 'luc
 import Avatar from './Avatar';
 import Image from 'next/image';
 import { getCaretCoordinates } from '@/utils/caretUtils'; // Import the new utility
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 // --- Type Definitions ---
 type UserMention = {

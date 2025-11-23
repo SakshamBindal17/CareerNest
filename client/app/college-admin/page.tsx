@@ -4,8 +4,8 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import ToastNotification from '@/components/ToastNotification';
+import { API_URL } from '@/utils/api';
 
-const API_URL = 'http://localhost:3001';
 
 type Department = {
   department_id: number;

@@ -3,8 +3,8 @@
 import { FC, useState, ChangeEvent, FormEvent, useEffect } from 'react';
 import { FaTimes, FaSpinner, FaPlus, FaEdit, FaTrash } from 'react-icons/fa';
 import { Profile, Experience, Education } from '@/types';
+import { API_URL } from '@/utils/api';
 
-const API_URL = 'http://localhost:3001';
 
 interface EditProfileModalProps {
     profile: Profile;

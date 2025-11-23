@@ -4,8 +4,7 @@ import { useAuth } from '@/context/UserContext';
 import { Plus, X, Edit, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import ToastNotification from '@/components/ToastNotification';
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 export type Job = {
   job_id: number; title: string; company_name: string; location: string | null; job_type: string | null;

@@ -10,8 +10,7 @@ import ToastNotification from '@/components/ToastNotification';
 import { Profile, Experience, Education, Connection } from '@/types';
 import EditProfileModal from '@/components/EditProfileModal';
 import Avatar from '@/components/Avatar';
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 // Prop Types
 interface ProfileHeaderProps {

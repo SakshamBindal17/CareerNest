@@ -8,6 +8,7 @@ import { LogOut, Home, Users, Briefcase, MessageSquare, Tag, Bell, Settings, Lay
 import { io, Socket } from 'socket.io-client';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { API_URL, SOCKET_URL } from '@/utils/api';
 
 type User = {
     fullName: string;
@@ -58,7 +59,7 @@ export default function Sidebar({ user, compact = false, onToggleCompact, onClos
             try {
                 const token = localStorage.getItem('token');
                 if (!token) return;
-                const res = await fetch('http://localhost:3001/api/notifications/summary', {
+                const res = await fetch(`${API_URL}/api/notifications/summary`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const data = await res.json();
@@ -89,7 +90,7 @@ export default function Sidebar({ user, compact = false, onToggleCompact, onClos
         useEffect(() => {
             const token = localStorage.getItem('token');
             if (!token) return;
-            socketRef.current = io('http://localhost:3001', { auth: { token } });
+            socketRef.current = io(SOCKET_URL, { auth: { token } });
             socketRef.current.on('connection:request:new', refreshSummary);
             socketRef.current.on('connection:request:accepted', refreshSummary);
             socketRef.current.on('message:new', () => {

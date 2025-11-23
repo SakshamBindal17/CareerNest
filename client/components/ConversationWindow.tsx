@@ -6,8 +6,7 @@ import { io, Socket } from 'socket.io-client'
 import { useAuth } from '@/context/UserContext'
 import { Send, Paperclip, Check, CheckCheck } from 'lucide-react'
 import Link from 'next/link'
-
-const API_URL = 'http://localhost:3001';
+import { API_URL, SOCKET_URL } from '@/utils/api';
 
 type Message = {
   message_id: number;

@@ -8,8 +8,7 @@ import { useAuth } from '@/context/UserContext'
 import { Check, X, MessageSquare } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import ToastNotification from '@/components/ToastNotification'
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 type ConnectionRequest = {
   connection_id: number;

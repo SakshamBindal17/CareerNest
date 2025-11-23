@@ -9,7 +9,7 @@ import { Eye, EyeOff } from 'lucide-react'
 // This is a new hook from Next.js to read URL parameters
 import { useSearchParams } from 'next/navigation'
 
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 // We wrap the component in <React.Suspense> in layout.tsx if needed,
 // but for this simple page, we'll just call the hook directly.

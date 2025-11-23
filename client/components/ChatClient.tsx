@@ -6,8 +6,7 @@ import Avatar from '@/components/Avatar';
 import ToastNotification from '@/components/ToastNotification';
 import ConversationWindow from '@/components/ConversationWindow';
 import { useSearchParams } from 'next/navigation';
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 type ConversationPreview = { connection_id: number; status: 'pending' | 'accepted' | 'rejected'; other_user_id: number; other_user_name: string; other_user_role: string; other_user_profile_icon_url?: string | null; last_message: string | null; last_message_at: string | null; unread_count: number; };
 
