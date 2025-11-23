@@ -13,8 +13,8 @@ import PostPublisherModal from './PostPublisherModal';
 import PostBody from './PostBody'; // Import the new component
 import { PostToEdit } from './PostPublisher';
 import Avatar from './Avatar'; // Import the Avatar component
+import { API_URL } from '@/utils/api';
 
-const API_URL = 'http://localhost:3001';
 
 // --- (All type definitions are the same) ---
 type MediaItem = { type: 'image' | 'document'; url: string; };

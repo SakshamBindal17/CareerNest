@@ -1,9 +1,10 @@
 // client/context/UserContext.tsx
 'use client'
 
-import React, { createContext, useState, useContext, ReactNode, useMemo, useEffect } from 'react';
+import React, { createContext, useState, useContext, ReactNode, useMemo, useEffect, useRef } from 'react';
+import { io, Socket } from 'socket.io-client';
 
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 import { useRouter, usePathname } from 'next/navigation';
 
 // Define the structure of the user object
@@ -35,6 +36,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter();
   const pathname = usePathname();
 
+  // Initial load of auth from localStorage
   useEffect(() => {
     const token = localStorage.getItem('token');
     const userData = localStorage.getItem('user');
@@ -64,6 +66,38 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
     try {
       const parsed = JSON.parse(userData) as AuthUser;
+
+      // If an already-authenticated user manually visits the public landing page ('/'),
+      // confirm whether they want to log out in order to view it.
+      if (pathname === '/') {
+        const roleLabel = parsed.role || 'user';
+        const wantsLogout = window.confirm(
+          `You are currently logged in as ${roleLabel}.\n` +
+          'To view the public landing page you must first log out.\n\n' +
+          'Press OK to logout and stay on the landing page, or Cancel to go back to your dashboard.'
+        );
+
+        if (wantsLogout) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setUser(null);
+          setLoading(false);
+          return; // remain on '/'
+        } else {
+          // Send them back to their role-specific area instead of viewing landing page
+          const rawRole = (parsed.role || '').toLowerCase();
+          let target = '/home';
+          if (rawRole === 'hod') target = '/hod-admin';
+          else if (rawRole === 'college_admin' || rawRole === 'college-admin') target = '/college-admin';
+          else if (rawRole === 'admin' || rawRole === 'super_admin' || rawRole === 'super-admin') target = '/admin';
+
+          setUser(parsed);
+          setLoading(false);
+          router.replace(target);
+          return;
+        }
+      }
+
       setUser(parsed);
     } catch (error) {
       console.error("Corrupted user data in localStorage. Clearing session.", error);
@@ -75,6 +109,60 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   // The dependency array ensures this runs only once on mount.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Live refresh of delegate flag (and other dynamic user fields) via lightweight polling & socket events
+  const lastDelegateCheck = useRef<number>(0);
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token || !user) return;
+
+    let cancelled = false;
+
+    const fetchFreshUser = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return; // ignore
+        const data = await res.json();
+        if (!data?.user) return;
+        // Only update if delegate flag changed (avoid re-renders on identical data)
+        setUser(prev => {
+          if (!prev) return prev;
+            const changed = prev.is_verification_delegate !== data.user.is_verification_delegate;
+            return changed ? { ...prev, is_verification_delegate: data.user.is_verification_delegate } : prev;
+        });
+      } catch {}
+    };
+
+    // Poll every 30s, but only if last check older than interval (tab visibility friendly)
+    const interval = setInterval(() => {
+      const now = Date.now();
+      if (now - lastDelegateCheck.current > 30000) {
+        lastDelegateCheck.current = now;
+        fetchFreshUser();
+      }
+    }, 10000); // check timer, apply 30s gate inside
+
+    // One immediate fetch for prompt update after potential delegation
+    fetchFreshUser();
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user]);
+
+  // Socket listener for real-time delegate flag updates
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token || !user) return;
+    const socket: Socket = io(API_URL, { auth: { token } });
+    socket.on('delegate:updated', (payload: any) => {
+      if (payload?.userId === user.id) {
+        setUser(prev => prev ? { ...prev, is_verification_delegate: !!payload.is_verification_delegate } : prev);
+      }
+    });
+    return () => { socket.disconnect(); };
+  }, [user]);
 
   // Fetch profile icon (and future lightweight profile fields) once per session.
   useEffect(() => {

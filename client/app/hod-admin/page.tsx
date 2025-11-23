@@ -5,8 +5,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import ToastNotification from '@/components/ToastNotification';
 import { ChevronLeft, ChevronRight, Search, Trash2, Users, UserCheck, UserCog, Hourglass } from 'lucide-react';
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 // Define types
 type AlumniRequest = {
@@ -288,26 +287,30 @@ export default function HODDashboard() {
 
   // --- ACTION HANDLERS ---
 
-  const handleUserAction = async (userId: number) => {
+  const suspendUser = async (userId: number, currentStatus: string) => {
     clearMessages();
-    if (!confirm(`Are you sure you want to suspend this user? They will lose access to the platform.`)) return;
-
+    const goingToSuspend = currentStatus !== 'suspended';
+    if (!confirm(goingToSuspend
+      ? 'Suspend this user? They will immediately lose access.'
+      : 'Re-activate this user so they can log in again?'
+    )) return;
     try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/api/hod-admin/suspend-user`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ userId }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to suspend user.');
-
-        setMessage(data.message);
-        fetchRoster(offset, search, roleFilter, statusFilter); // Refresh current view
-  } catch (err: unknown) {
-    setError(err instanceof Error ? err.message : 'Failed to suspend user.');
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/api/hod-admin/suspend-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ userId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update user status.');
+      setMessage(data.message);
+      fetchRoster(offset, search, roleFilter, statusFilter);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to update user status.');
     }
   };
+
+  // Reinstate flow removed: rejected alumni disappear from queue and may re-apply.
 
   const handleVerificationAction = async (userId: number, action: 'approve' | 'reject' | 'transfer') => {
     clearMessages();
@@ -430,15 +433,15 @@ export default function HODDashboard() {
                 <option value="Alumni">Alumni</option>
             </select>
 
-            {/* Status Filter - Default is active. Let's add 'all' */}
+            {/* Status Filter - Default is active */}
             <select 
                 value={statusFilter} 
                 onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
                 className="w-full md:w-1/4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
             >
-                <option value="all">Filter by Status (All)</option>
-                <option value="active">Active</option>
-                <option value="suspended">Suspended</option>
+              <option value="all">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
             </select>
         </div>
 
@@ -462,14 +465,14 @@ export default function HODDashboard() {
                     </div>
 
                     {/* Actions */}
-                    <button
-                        onClick={() => handleUserAction(user.user_id)}
-                        disabled={user.status === 'suspended'}
-                        className="flex items-center gap-1 text-red-500 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <Trash2 className="w-4 h-4" />
-                        {user.status === 'suspended' ? 'Suspended' : 'Suspend'}
-                    </button>
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => suspendUser(user.user_id, user.status)}
+                        className={`flex items-center gap-1 ${user.status === 'suspended' ? 'text-emerald-500 hover:text-emerald-700' : 'text-red-500 hover:text-red-700'}`}
+                      >
+                        <Trash2 className="w-4 h-4" /> {user.status === 'suspended' ? 'Activate' : 'Suspend'}
+                      </button>
+                    </div>
                 </div>
             ))}
         </div>

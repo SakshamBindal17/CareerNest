@@ -559,6 +559,9 @@ app.post('/api/hod-admin/delegates', [authMiddleware, isHODorAdmin], async (req,
       [newFlag, userId]
     );
 
+    // Emit real-time delegate flag update
+    try { io.emit('delegate:updated', { userId, is_verification_delegate: newFlag }); } catch (e) { /* non-critical */ }
+
     // Fetch dept + HOD display name for email context
     const { department_name } = await getDepartmentAndHOD(hodId);
     const hodRow = await getUserBasic(hodId);
@@ -1720,26 +1723,25 @@ const alumniVerificationAccess = async (req, res, next) => {
 /**
  * @route GET /api/hod-admin/alumni-queue
  * @desc (HOD/Delegate) Gets all pending alumni verification requests for their department.
+ *        Only "pending_admin_approval" is returned so that rejected alumni
+ *        disappear from the queue and can re-apply with fresh details.
  */
 app.get('/api/hod-admin/alumni-queue', [authMiddleware, alumniVerificationAccess], async (req, res) => {
   try {
-    const { department_id } = req.user; // Get dept ID from token
-
-    // Find all users who are Alumni, are linked to this department, and need approval.
-    const pendingAlumni = await db.query(
+    const { department_id } = req.user;
+    // We now only surface pending_admin_approval items; suspended is not used
+    const q = await db.query(
       `SELECT 
-         user_id, full_name, personal_email, graduation_year, institute_roll_number, verification_document_url, created_at, role
-       FROM users 
-       WHERE department_id = $1 
-         AND role = 'Alumni' 
-         AND status = 'pending_admin_approval'`,
+         user_id, full_name, personal_email, graduation_year, institute_roll_number, verification_document_url, created_at, role, status
+       FROM users
+       WHERE department_id = $1 AND role = 'Alumni' AND status = 'pending_admin_approval'
+       ORDER BY created_at DESC`,
       [department_id]
     );
-
-    res.status(200).json(pendingAlumni.rows);
+    res.status(200).json(q.rows);
   } catch (err) {
     console.error('Error in /api/hod-admin/alumni-queue:', err);
-    res.status(500).json({ error: 'An error occurred on the server.' });
+    res.status(500).json({ error: 'Failed to load alumni queue.' });
   }
 });
 
@@ -2005,15 +2007,16 @@ app.post('/api/hod-admin/verify-alumnus', [authMiddleware, alumniVerificationAcc
       );
 
     } else if (actionType === 'reject') {
-      // B. REJECT: Set status to suspended (so they can't log in)
+      // B. REJECT: Hard-reject the request so they can sign up again
+      // Clear the document and move status back to pending_email_verification
       await client.query(
         `UPDATE users 
-         SET status = 'suspended', verification_document_url = null
+         SET status = 'pending_email_verification', verification_document_url = null
          WHERE user_id = $1`,
         [userId]
       );
 
-      message = `Alumnus ${user.full_name} rejected and suspended.`;
+      message = `Alumnus ${user.full_name} rejected. They may submit a new request.`;
 
       // Fetch dept + institute + rejector for personalization
       const infoResult2 = await db.query(
@@ -2157,8 +2160,8 @@ app.get('/api/hod-admin/department-roster', [authMiddleware, isHODorAdmin], asyn
 
 /**
  * @route POST /api/hod-admin/suspend-user
- * @desc (HOD) Suspends a user (Student/Faculty/Alumni) in their department.
- * Changes status to 'suspended'. 
+ * @desc (HOD) Toggles suspension for a user (Student/Faculty/Alumni) in their department.
+ *        If currently active, they become suspended; if suspended, they become active again.
  */
 app.post('/api/hod-admin/suspend-user', [authMiddleware, isHODorAdmin], async (req, res) => {
   const { userId } = req.body;
@@ -2167,7 +2170,7 @@ app.post('/api/hod-admin/suspend-user', [authMiddleware, isHODorAdmin], async (r
   try {
     // 1. Ensure the user exists and belongs to this HOD's department
     const result = await db.query(
-      `SELECT user_id, role, status FROM users 
+      `SELECT user_id, full_name, role, status FROM users 
        WHERE user_id = $1 AND department_id = $2`,
       [userId, department_id]
     );
@@ -2183,17 +2186,32 @@ app.post('/api/hod-admin/suspend-user', [authMiddleware, isHODorAdmin], async (r
       return res.status(403).json({ error: 'Cannot suspend an administrative account.' });
     }
 
-    // 3. Update the user's status to 'suspended'
+    // 3. Toggle between 'active' and 'suspended'
+    const newStatus = user.status === 'suspended' ? 'active' : 'suspended';
     await db.query(
-      `UPDATE users SET status = 'suspended' WHERE user_id = $1`,
-      [userId]
+      `UPDATE users SET status = $1 WHERE user_id = $2`,
+      [newStatus, userId]
     );
 
-    res.status(200).json({ message: `User ${userId} suspended successfully.` });
+    const actionLabel = newStatus === 'suspended' ? 'suspended' : 're-activated';
+    res.status(200).json({
+      message: `User ${user.full_name || userId} ${actionLabel} successfully.`,
+      status: newStatus,
+      fullName: user.full_name || null,
+    });
   } catch (err) {
     console.error('Error in /api/hod-admin/suspend-user:', err);
     res.status(500).json({ error: 'An error occurred on the server.' });
   }
+});
+
+/**
+ * Legacy reinstate-alumnus endpoint is no longer used now that rejection
+ * removes requests from the queue and suspend-user toggles active/suspended.
+ * We keep a stub returning 410 to avoid accidental use.
+ */
+app.post('/api/hod-admin/reinstate-alumnus', [authMiddleware, alumniVerificationAccess], (req, res) => {
+  return res.status(410).json({ error: 'reinstate-alumnus is deprecated. Use suspend toggle and new signup flow.' });
 });
 
 

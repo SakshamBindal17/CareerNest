@@ -1,13 +1,13 @@
 // src/app/request-onboarding/page.tsx
 'use client'
 
-import React, { useState } from 'react'
-import Link from 'next/link'
-import Image from 'next/image'
-import OtpInput from '@/components/OtpInput'; // <-- ADD THIS
-
-// Define our API's base URL
-const API_URL = 'http://localhost:3001';
+import React, { useState } from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import OtpInput from '@/components/OtpInput';
+import { useRouter } from 'next/navigation';
+import ToastNotification from '@/components/ToastNotification';
+import { API_URL } from '@/utils/api';
 
 export default function RequestOnboardingPage() {
   const [step, setStep] = useState<'details' | 'otp' | 'success'>('details');

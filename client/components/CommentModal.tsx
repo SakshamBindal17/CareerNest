@@ -9,8 +9,7 @@ import { ReportModal } from './PostCard';
 import { getCaretCoordinates } from '@/utils/caretUtils'; // Import the utility
 import CommentTextRenderer from './CommentTextRenderer'; // Import the new renderer
 import Avatar from './Avatar'; // Import the Avatar component
-
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 // --- User type for mentions ---
 type UserMention = {

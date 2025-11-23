@@ -6,9 +6,11 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link' 
 import Image from 'next/image' 
 import { Eye, EyeOff } from 'lucide-react'
+import { useAuth } from '@/context/UserContext'
+
+import { API_URL } from "@/utils/api";
 
 // Define our API's base URL
-const API_URL = 'http://localhost:3001';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -17,6 +19,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const [showPassword, setShowPassword] = useState(false);
+  const { setUser } = useAuth();
 
   // --- THIS FUNCTION IS NOW LIVE ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -39,13 +42,34 @@ export default function LoginPage() {
         throw new Error(data.error || 'Login failed.');
       }
 
-      // 2. On success, save the token and user data
-      // We'll use localStorage to keep the user logged in
+      // 2. On success, persist credentials
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
-      // 3. Redirect to the correct dashboard [cite: 258-265]
-      router.push(data.redirectTo);
+      // 3. Clear any per-user cached data that could leak previous session UI
+      try { sessionStorage.removeItem('home_posts'); } catch {}
+
+      // 4. Update context immediately (prevents stale previous user until refresh)
+      setUser({
+        id: data.user.id,
+        fullName: data.user.fullName,
+        role: data.user.role,
+        email: data.user.email,
+        college_id: data.user.college_id,
+        department_id: data.user.department_id,
+        profileIconUrl: data.user.profileIconUrl,
+        is_verification_delegate: data.user.is_verification_delegate
+      });
+
+      // 5. Compute redirect target if backend didn't supply or to normalize
+      let target = data.redirectTo;
+      if (!target) {
+        const roleLower = (data.user.role || '').toLowerCase();
+        if (roleLower === 'college admin' || roleLower === 'college_admin') target = '/college-admin';
+        else if (roleLower === 'super admin' || roleLower === 'admin' || roleLower === 'super_admin') target = '/admin';
+        else target = '/home';
+      }
+      router.replace(target);
 
     } catch (err: any) {
       setError(err.message);

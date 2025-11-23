@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Avatar from '@/components/Avatar';
 
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '@/utils/api';
 
 type User = { user_id: number; full_name: string; role: string; graduation_year: string | null; department_name: string | null; headline: string | null; profile_icon_url?: string | null; connection_status: 'pending' | 'accepted' | null; connection_sender_id: number | null; connection_id: number | null; };
 

@@ -4,9 +4,9 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
+import { API_URL } from '@/utils/api';
 
 // Define our API's base URL
-const API_URL = 'http://localhost:3001';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')

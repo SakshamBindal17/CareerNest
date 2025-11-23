@@ -4,8 +4,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/UserContext';
 import { ShieldCheck, Trash2, AlertTriangle, User, Calendar, X, ArrowLeft, ArrowRight, FileText } from 'lucide-react';
 import ToastNotification from '@/components/ToastNotification';
+import { API_URL } from '@/utils/api';
 
-const API_URL = 'http://localhost:3001';
 
 type Report = {
   report_id: number;
