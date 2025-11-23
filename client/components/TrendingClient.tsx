@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import PostCard from '@/components/PostCard';
 import { Post } from '@/types';
 import ToastNotification from '@/components/ToastNotification';
+import { API_URL } from '@/utils/api';
 
 const PostCardPlaceholder = () => (
   <div className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow animate-pulse">
@@ -34,7 +35,7 @@ export default function TrendingClient() {
         throw new Error('You must be logged in to see trending posts.');
       }
 
-      const res = await fetch('http://localhost:3001/api/posts/trending', {
+      const res = await fetch(`${API_URL}/api/posts/trending`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
