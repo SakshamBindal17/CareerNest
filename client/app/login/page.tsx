@@ -56,7 +56,8 @@ export default function LoginPage() {
 
   // --- (This autofill handler is the same) ---
   const handleAutofill = (e: React.AnimationEvent<HTMLInputElement>) => {
-    if (e.animationName === 'onAutoFillStart' && e.target.id === 'password') {
+    // Use currentTarget (typed as HTMLInputElement) instead of generic EventTarget
+    if (e.animationName === 'onAutoFillStart' && e.currentTarget.id === 'password') {
       setPassword(e.currentTarget.value);
     }
   }

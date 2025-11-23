@@ -51,7 +51,8 @@ export default function AdminDashboard() {
     setLoadingStats(true);
     setError(null);
     const token = localStorage.getItem('token');
-    const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+    // Ensure headers type satisfies fetch (HeadersInit) – do not create a union with undefined values
+    const authHeaders: HeadersInit = token ? { 'Authorization': `Bearer ${token}` } : {};
     try {
       const [activeRes, pendingRes, statsRes] = await Promise.all([
         fetch(`${API_URL}/api/admin/universities?status=active`, { headers: authHeaders }),
