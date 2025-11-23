@@ -53,7 +53,7 @@ export default function OtpInput({ length = 6, value, onChange }: OtpInputProps)
             value={value[index] || ''}
             onChange={(e) => handleChange(e, index)}
             onKeyDown={(e) => handleKeyDown(e, index)}
-            ref={(el) => (inputRefs.current[index] = el)}
+            ref={(el) => { inputRefs.current[index] = el; }}
             className="w-12 h-14 rounded-md border border-gray-300 text-center text-2xl font-bold text-gray-900 dark:bg-gray-700 dark:text-white dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         ))}

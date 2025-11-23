@@ -17,6 +17,7 @@ type UserMention = {
   user_id: number;
   full_name: string;
   headline: string | null;
+  profile_icon_url?: string | null; // optional profile icon for mention list
 };
 
 // Base comment type from API
