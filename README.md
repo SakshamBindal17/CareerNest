@@ -243,39 +243,73 @@ sequenceDiagram
 **Never commit this file to version control.**
 
 ```env
-# Server Configuration
-PORT=5000
+# Core
+PORT=3001
+PROJECT_NAME=CareerNest
+NODE_ENV=development
 
-# Database Connection (PostgreSQL)
-DB_USER=your_db_user
-DB_HOST=localhost
-DB_DATABASE=careernest_dev
-DB_PASSWORD=your_db_password
-DB_PORT=5432
+# Database (Neon / Postgres)
+# Example: postgresql://user:password@host/dbname?sslmode=require
+DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
 
-# JWT Authentication - Use a long, random, and secret string
-JWT_SECRET=your_super_secret_and_long_jwt_key
+# Auth
+JWT_SECRET=replace_with_long_random_secret_string
 
-# Email Service (using Nodemailer with a service like Gmail or SendGrid)
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_gmail_app_password
+# CORS (comma separated list of allowed origins)
+# For production give exact domains, no wildcard when using credentials.
+CORS_ORIGINS=http://localhost:3000
+# Example production: CORS_ORIGINS=https://app.careernest.com,https://api.careernest.com
 
-# Cloudinary Service (for image hosting)
+# Storage Provider (cloudinary or s3)
+STORAGE_PROVIDER=cloudinary
+
+# Cloudinary (if STORAGE_PROVIDER=cloudinary)
 CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
 CLOUDINARY_API_KEY=your_cloudinary_api_key
 CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
-# AWS S3 Service (for file/video hosting)
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-AWS_REGION=your_aws_region
-S3_BUCKET_NAME=your_s3_bucket_name
-```
+# AWS S3 (if STORAGE_PROVIDER=s3)
+# AWS_ACCESS_KEY_ID=your_aws_access_key
+# AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+# AWS_REGION=ap-south-1
+# AWS_S3_BUCKET=your_s3_bucket_name
 
+# Email (SMTP)
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=465
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASS=your_gmail_app_password_or_app_specific_password
+
+# Optional future flags
+# ENABLE_METRICS=false
+# ENABLE_DEBUG_SQL=false
+
+# Logging
+LOG_LEVEL=info
+
+# Notes:
+# 1. Never commit real secrets.
+# 2. Use a unique JWT_SECRET per environment.
+# 3. Avoid CORS_ORIGINS=* when credentials/auth headers are used.
+# 4. If moving to cookie auth later: ensure shared apex domain & SameSite=None;Secure.
+
+```
+for fronted (env) 
+```env
+# Base API URL (server deployment)
+NEXT_PUBLIC_API_URL=http://localhost:3001
+# Socket.IO endpoint (can match API if same host)
+NEXT_PUBLIC_SOCKET_URL=http://localhost:3001
+
+# Optional: Feature flags
+# NEXT_PUBLIC_ENABLE_DEBUG_OVERLAY=false
+
+# In production set, for example:
+# NEXT_PUBLIC_API_URL=https://api.careernest.com
+# NEXT_PUBLIC_SOCKET_URL=https://api.careernest.com
 ---
 
+```
 ## 9. Database Schema & ER Diagram
 
 ### 9.1. ER Diagram (Mermaid)
