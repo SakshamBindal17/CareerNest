@@ -13,7 +13,7 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-30 w-full px-6 py-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm shadow-sm">
       <nav className="mx-auto flex max-w-7xl items-center justify-between">
-        <Link href="/home">
+        <Link href={user ? '/home' : '/'}>
           <Image src="/logo.png" alt="CareerNest Logo" width={728} height={142} priority className="h-8 w-auto" />
         </Link>
         <div className="flex items-center space-x-4 md:space-x-6">
