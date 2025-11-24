@@ -3618,6 +3618,18 @@ app.post('/api/posts/:postId/report', [authMiddleware], async (req, res) => {
   }
 
   try {
+    // Prevent duplicate reports from the same user on the same post while still
+    // allowing multiple different users to report it.
+    const existing = await db.query(
+      `SELECT report_id FROM reported_content
+       WHERE post_id = $1 AND reported_by_user_id = $2 AND status IN ('pending','under_review')`,
+      [postId, reported_by_user_id]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'You have already reported this post.' });
+    }
+
     await db.query(
       `INSERT INTO reported_content (post_id, reported_by_user_id, college_id, reason, status)
        VALUES ($1, $2, $3, $4, 'pending')`,
@@ -3644,6 +3656,16 @@ app.post('/api/comments/:commentId/report', [authMiddleware], async (req, res) =
   }
 
   try {
+    const existing = await db.query(
+      `SELECT report_id FROM reported_content
+       WHERE comment_id = $1 AND reported_by_user_id = $2 AND status IN ('pending','under_review')`,
+      [commentId, reported_by_user_id]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'You have already reported this comment.' });
+    }
+
     await db.query(
       `INSERT INTO reported_content (comment_id, reported_by_user_id, college_id, reason, status)
        VALUES ($1, $2, $3, $4, 'pending')`,
@@ -3865,9 +3887,9 @@ app.get('/api/profile/:userId', [authMiddleware], async (req, res) => {
  * @desc (Authenticated) Updates the user's own core profile info.
  */
 app.put('/api/profile', [authMiddleware, upload.fields([{ name: 'profileIcon', maxCount: 1 }, { name: 'coverPhoto', maxCount: 1 }])], async (req, res) => {
-    const { id: userId } = req.user;
-    const { headline, about } = req.body;
-    const files = req.files;
+  const { id: userId } = req.user;
+  const { headline, about, full_name } = req.body;
+  const files = req.files;
 
     let profileIconUrl = undefined;
     let coverPhotoUrl = undefined;
@@ -3887,6 +3909,14 @@ app.put('/api/profile', [authMiddleware, upload.fields([{ name: 'profileIcon', m
         const client = await db.pool.connect();
         try {
             await client.query('BEGIN');
+
+          // Update core user fields (full name) if provided
+          if (typeof full_name === 'string' && full_name.trim() !== '') {
+            await client.query(
+              'UPDATE users SET full_name = $1 WHERE user_id = $2',
+              [full_name.trim(), userId]
+            );
+          }
 
             // Ensure a profile record exists
             await client.query(
@@ -3917,13 +3947,16 @@ app.put('/api/profile', [authMiddleware, upload.fields([{ name: 'profileIcon', m
             }
 
             if (updates.length > 0) {
-                const queryText = `UPDATE profiles SET ${updates.join(', ')} WHERE user_id = $1 RETURNING *`;
-                const updatedProfile = await client.query(queryText, params);
-                await client.query('COMMIT');
-                res.status(200).json(updatedProfile.rows[0]);
+              const queryText = `UPDATE profiles SET ${updates.join(', ')} WHERE user_id = $1 RETURNING *`;
+              const updatedProfile = await client.query(queryText, params);
+              await client.query('COMMIT');
+              res.status(200).json({
+                profile: updatedProfile.rows[0],
+                full_name: typeof full_name === 'string' ? full_name.trim() : undefined
+              });
             } else {
-                await client.query('ROLLBACK');
-                res.status(200).json({ message: "No changes to update." });
+              await client.query('COMMIT');
+              res.status(200).json({ message: "No changes to update.", full_name: typeof full_name === 'string' ? full_name.trim() : undefined });
             }
         } catch (dbErr) {
             await client.query('ROLLBACK');
