@@ -15,6 +15,7 @@ const SMTP_PASS = process.env.EMAIL_PASS;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || SMTP_USER;
 const SMTP_FORCE_IPV4 = parseBoolean(process.env.EMAIL_FORCE_IPV4, true);
+const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase();
 const SMTP_SECURE =
   process.env.EMAIL_SECURE === undefined
     ? SMTP_PORT === 465
@@ -121,6 +122,12 @@ const sendEmail = async (to, subject, textOrHtml, html) => {
       text,
       html: finalHtml,
     };
+
+    if (EMAIL_PROVIDER === 'resend') {
+      await sendViaResend(mailOptions);
+      console.log(`Email sent successfully to ${to}`);
+      return;
+    }
 
     try {
       await primaryTransporter.sendMail(mailOptions);
