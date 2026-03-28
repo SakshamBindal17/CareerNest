@@ -276,9 +276,15 @@ CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
 # Email (SMTP)
 EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=465
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_REQUIRE_TLS=true
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASS=your_gmail_app_password_or_app_specific_password
+# Optional SMTP timeout tuning (milliseconds)
+# EMAIL_CONNECTION_TIMEOUT_MS=20000
+# EMAIL_GREETING_TIMEOUT_MS=15000
+# EMAIL_SOCKET_TIMEOUT_MS=30000
 
 # Optional future flags
 # ENABLE_METRICS=false
@@ -435,6 +441,7 @@ All endpoints are prefixed with `/api`. Protected endpoints require a valid JWT 
 2.  **Platform Setup:** Create a new application on your chosen hosting platform.
 3.  **Provision a Database:** Use a managed PostgreSQL service (like Heroku Postgres or AWS RDS). This is more reliable than running a database on the same server as your app. The service will provide a `DATABASE_URL`.
 4.  **Set Environment Variables:** In your hosting platform's dashboard, add all the variables from your `.env` file (`JWT_SECRET`, `CLOUDINARY_...`, etc.).
+    - For SMTP on hosted platforms like Render, prefer STARTTLS: `EMAIL_PORT=587`, `EMAIL_SECURE=false`, `EMAIL_REQUIRE_TLS=true`.
 5.  **Deploy:** Connect your GitHub repository for automatic deployments or push the code using the platform's CLI.
 
 ### 11.2. Frontend Deployment (on Vercel)
