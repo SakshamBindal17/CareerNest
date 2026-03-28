@@ -1,6 +1,7 @@
 // server/emailService.js
 require('dotenv').config();
 const nodemailer = require('nodemailer');
+const dns = require('dns');
 
 const parseBoolean = (value, fallback = false) => {
   if (value === undefined || value === null || value === '') return fallback;
@@ -13,6 +14,7 @@ const SMTP_USER = process.env.EMAIL_USER;
 const SMTP_PASS = process.env.EMAIL_PASS;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || SMTP_USER;
+const SMTP_FORCE_IPV4 = parseBoolean(process.env.EMAIL_FORCE_IPV4, true);
 const SMTP_SECURE =
   process.env.EMAIL_SECURE === undefined
     ? SMTP_PORT === 465
@@ -20,11 +22,16 @@ const SMTP_SECURE =
 const SMTP_REQUIRE_TLS = parseBoolean(process.env.EMAIL_REQUIRE_TLS, !SMTP_SECURE);
 
 const createTransporter = ({ port, secure, requireTLS }) => {
+  const lookup = SMTP_FORCE_IPV4
+    ? (hostname, options, callback) => dns.lookup(hostname, { family: 4 }, callback)
+    : undefined;
+
   return nodemailer.createTransport({
     host: SMTP_HOST,
     port,
     secure,
     requireTLS,
+    lookup,
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
