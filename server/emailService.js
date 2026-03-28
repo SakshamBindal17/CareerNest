@@ -11,6 +11,8 @@ const SMTP_HOST = process.env.EMAIL_HOST;
 const SMTP_PORT = Number(process.env.EMAIL_PORT || 465);
 const SMTP_USER = process.env.EMAIL_USER;
 const SMTP_PASS = process.env.EMAIL_PASS;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || SMTP_USER;
 const SMTP_SECURE =
   process.env.EMAIL_SECURE === undefined
     ? SMTP_PORT === 465
@@ -46,6 +48,32 @@ const fallbackTransporter = createTransporter({
   secure: false,
   requireTLS: true,
 });
+
+const sendViaResend = async ({ to, subject, text, html }) => {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
+    throw new Error('Resend is not configured');
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: `CareerNest <${RESEND_FROM_EMAIL}>`,
+      to: [to],
+      subject,
+      text,
+      html,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Resend failed (${response.status}): ${body}`);
+  }
+};
 
 // Utility: produce a plain-text fallback from HTML
 const stripHtml = (html) => {
@@ -93,15 +121,36 @@ const sendEmail = async (to, subject, textOrHtml, html) => {
       const isGmailHost = /gmail\.com$/i.test(SMTP_HOST || '');
       const isConnectionFailure = ['ETIMEDOUT', 'ECONNREFUSED', 'ESOCKET'].includes(error.code);
       const canUseFallback = isGmailHost && SMTP_PORT !== 587 && isConnectionFailure;
+      const canUseResendFallback = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL && isConnectionFailure);
 
-      if (!canUseFallback) {
-        throw error;
+      if (canUseFallback) {
+        console.warn(
+          `Primary SMTP failed (${error.code}). Retrying with STARTTLS on 587 for ${SMTP_HOST}...`
+        );
+
+        try {
+          await fallbackTransporter.sendMail(mailOptions);
+          return;
+        } catch (fallbackError) {
+          if (!canUseResendFallback) {
+            throw fallbackError;
+          }
+
+          console.warn(
+            `SMTP fallback failed (${fallbackError.code || 'UNKNOWN'}). Retrying via Resend API...`
+          );
+          await sendViaResend(mailOptions);
+          return;
+        }
       }
 
-      console.warn(
-        `Primary SMTP failed (${error.code}). Retrying with STARTTLS on 587 for ${SMTP_HOST}...`
-      );
-      await fallbackTransporter.sendMail(mailOptions);
+      if (canUseResendFallback) {
+        console.warn(`Primary SMTP failed (${error.code}). Retrying via Resend API...`);
+        await sendViaResend(mailOptions);
+        return;
+      }
+
+      throw error;
     }
 
     console.log(`Email sent successfully to ${to}`);
